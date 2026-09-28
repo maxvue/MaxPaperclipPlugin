@@ -13,8 +13,11 @@ import {
   Folder,
   Eye,
   Trash2,
+  ClipboardList,
+  Settings2,
 } from "lucide-react";
-import type { IssueSummary, LiveRun, ProjectSummary } from "./types.js";
+import { usePluginData } from "@paperclipai/plugin-sdk/ui";
+import type { IssueSummary, LiveRun, PlanningBootstrap, ProjectSummary } from "./types.js";
 import {
   fetchCompanyTasks,
   fetchCompanyProjects,
@@ -29,6 +32,7 @@ import { sidebarStore, useSidebarStore } from "./store.js";
 import { TaskRow, type RunningAgentInfo } from "./TaskRow.js";
 import { StatusIcon } from "./StatusIcon.js";
 import { TaskDeleteConfirmModal } from "./TaskDeleteConfirmModal.js";
+import { PlanningDialog } from "./PlanningDialog.js";
 
 interface TaskSidebarRightColumnProps {
   context?: {
@@ -81,6 +85,14 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
   const [loading, setLoading] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
   const [hiddenAccordionOpen, setHiddenAccordionOpen] = useState(false);
+  const [planningTarget, setPlanningTarget] = useState<{
+    project: ProjectSummary;
+    task?: IssueSummary | null;
+    configurationOnly?: boolean;
+  } | null>(null);
+  const planning = usePluginData<PlanningBootstrap>("planning-bootstrap", {
+    companyId: companyId ?? "",
+  });
 
   // Estado do modal de confirmação de exclusão
   const [deleteModalState, setDeleteModalState] = useState<{
@@ -833,6 +845,34 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
                       {/* Ações do Cabeçalho de Projeto (Requisitos 1, 2, 3, 4) */}
                       {!group.isUnassigned && !exibindoArquivados && (
                         <div className="flex items-center gap-1 shrink-0 ml-1">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              const project = projectsById.get(group.id);
+                              if (project) setPlanningTarget({ project, configurationOnly: true });
+                            }}
+                            disabled={planning.loading || Boolean(planning.error)}
+                            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/60 disabled:opacity-40"
+                            title={`Configurar agente de planejamento de ${group.name}`}
+                            aria-label={`Configurar agente de planejamento de ${group.name}`}
+                          >
+                            <Settings2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              const project = projectsById.get(group.id);
+                              if (project) setPlanningTarget({ project });
+                            }}
+                            disabled={planning.loading || Boolean(planning.error)}
+                            className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 disabled:opacity-40"
+                            title={`Planejar tarefa em ${group.name}`}
+                            aria-label={`Planejar tarefa em ${group.name}`}
+                          >
+                            <ClipboardList className="w-3.5 h-3.5" />
+                          </button>
                           {/* Botão Subir Projeto */}
                           <button
                             type="button"
@@ -970,6 +1010,12 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
                               onArchive={handleArchiveTask}
                               onUnarchive={handleUnarchiveTask}
                               onRequestDelete={handleRequestDelete}
+                              onPlan={(selectedTask) => {
+                                const project = selectedTask.projectId
+                                  ? projectsById.get(selectedTask.projectId)
+                                  : null;
+                                if (project) setPlanningTarget({ project, task: selectedTask });
+                              }}
                             />
                           ))}
                       </div>
@@ -1163,6 +1209,19 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
         onConfirmSingle={handleConfirmSingle}
         onCancel={handleCancelDelete}
       />
+      {companyId && companyPrefix && (
+        <PlanningDialog
+          open={Boolean(planningTarget)}
+          companyId={companyId}
+          companyPrefix={companyPrefix}
+          project={planningTarget?.project ?? null}
+          sourceTask={planningTarget?.task}
+          configurationOnly={planningTarget?.configurationOnly}
+          bootstrap={planning.data}
+          onClose={() => setPlanningTarget(null)}
+          onSaved={planning.refresh}
+        />
+      )}
     </>
   );
 }

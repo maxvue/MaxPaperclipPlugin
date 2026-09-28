@@ -15,6 +15,9 @@ const manifest: PaperclipPluginManifestV1 = {
   capabilities: [
     "issues.read",
     "projects.read",
+    "agents.read",
+    "plugin.state.read",
+    "plugin.state.write",
     "ui.action.register",
     "ui.detailTab.register",
   ],

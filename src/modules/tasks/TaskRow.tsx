@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronRight, ChevronDown, EyeOff, Archive, ArchiveRestore, Trash2 } from "lucide-react";
+import { ChevronRight, ChevronDown, EyeOff, Archive, ArchiveRestore, Trash2, ClipboardList } from "lucide-react";
 import type { IssueSummary, ProjectSummary } from "./types.js";
 import { formatElapsedTime } from "./time.js";
 import { sidebarStore, useSidebarStore } from "./store.js";
@@ -24,6 +24,7 @@ interface TaskRowProps {
   onArchive?: (taskId: string) => void;
   onUnarchive?: (taskId: string) => void;
   onRequestDelete?: (task: IssueSummary, subtasks: IssueSummary[]) => void;
+  onPlan?: (task: IssueSummary) => void;
 }
 
 /**
@@ -91,6 +92,7 @@ export function TaskRow({
   onArchive,
   onUnarchive,
   onRequestDelete,
+  onPlan,
 }: TaskRowProps) {
   const store = useSidebarStore();
   const isExpanded = store.expandedTaskIds.has(task.id);
@@ -313,6 +315,20 @@ export function TaskRow({
 
           {/* Camada 2: Botões Rápidos no Hover */}
           <div className="max-task-acoes">
+            {!isArchived && project && onPlan && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onPlan(task);
+                }}
+                className="p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+                title="Planejar a partir desta tarefa"
+                aria-label="Planejar a partir desta tarefa"
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+              </button>
+            )}
             {/* Botão Ocultar (somente no modo normal) */}
             {!isArchived && onHide && (
               <button

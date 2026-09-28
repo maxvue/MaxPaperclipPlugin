@@ -17,6 +17,9 @@ describe("MaxPaperclipPlugin - Manifesto e Configurações", () => {
     const requiredCaps = [
       "issues.read",
       "projects.read",
+      "agents.read",
+      "plugin.state.read",
+      "plugin.state.write",
       "ui.action.register",
       "ui.detailTab.register",
     ];

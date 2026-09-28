@@ -36,4 +36,25 @@ export interface ProjectSummary {
   name: string;
   color?: string | null;
   icon?: string | null;
+  leadAgentId?: string | null;
+}
+
+export interface PlanningLeaderSummary {
+  id: string;
+  name: string;
+  title?: string | null;
+  status: string;
+}
+
+export interface ProjectPlanningConfig {
+  enabled: boolean;
+  planningAgentId: string;
+  requireScopeApproval: true;
+  requireTechnicalApproval: true;
+  updatedAt: string;
+}
+
+export interface PlanningBootstrap {
+  leaders: PlanningLeaderSummary[];
+  configurations: Record<string, ProjectPlanningConfig | null>;
 }
