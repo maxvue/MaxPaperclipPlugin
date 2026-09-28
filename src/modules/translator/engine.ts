@@ -18,8 +18,8 @@ const CODE_TAGS = new Set(["CODE", "PRE"]);
 const SCRIPT_STYLE_TAGS = new Set(["SCRIPT", "STYLE"]);
 
 // Mapas fracos para rastrear o texto e atributos originais em inglês
-const originalTextMap = new WeakMap<Node, string>();
-const originalAttrMap = new WeakMap<Element, Record<string, string>>();
+const originalTextMap = new WeakMap<Node, { original: string; translated: string }>();
+const originalAttrMap = new WeakMap<Element, Record<string, { original: string; translated: string }>>();
 
 class TranslationEngine {
   private _enabled: boolean;
@@ -27,6 +27,7 @@ class TranslationEngine {
   private scheduledNodes: Node[] = [];
   private isScheduled = false;
   private listeners = new Set<(enabled: boolean) => void>();
+  private originalDocumentLang: string | null = null;
 
   constructor() {
     if (typeof window === "undefined") {
@@ -124,7 +125,9 @@ class TranslationEngine {
     let matched = false;
     for (let i = 0; i < regexRules.length; i++) {
       const rule = regexRules[i];
+      rule.regex.lastIndex = 0;
       if (rule.regex.test(processed)) {
+        rule.regex.lastIndex = 0;
         processed = processed.replace(rule.regex, rule.replacement);
         matched = true;
       }
@@ -147,12 +150,11 @@ class TranslationEngine {
           savedAttrs = {};
           originalAttrMap.set(el, savedAttrs);
         }
-        if (!(attr in savedAttrs)) {
-          savedAttrs[attr] = val;
-        }
-
+        const previous = savedAttrs[attr];
+        if (previous?.translated === val) continue;
         const t = this.translateString(val);
         if (t && t !== val) {
+          savedAttrs[attr] = { original: val, translated: t };
           el.setAttribute(attr, t);
         }
       }
@@ -168,11 +170,11 @@ class TranslationEngine {
             savedAttrs = {};
             originalAttrMap.set(el, savedAttrs);
           }
-          if (!("value" in savedAttrs)) {
-            savedAttrs["value"] = val;
-          }
+          const previous = savedAttrs.value;
+          if (previous?.translated === val) return;
           const t = this.translateString(val);
           if (t && t !== val) {
+            savedAttrs.value = { original: val, translated: t };
             inputEl.setAttribute("value", t);
           }
         }
@@ -201,12 +203,11 @@ class TranslationEngine {
       const parent = node.parentElement;
       if (parent && !SCRIPT_STYLE_TAGS.has(parent.tagName) && !CODE_TAGS.has(parent.tagName)) {
         const current = node.nodeValue || "";
-        if (!originalTextMap.has(node)) {
-          originalTextMap.set(node, current);
-        }
-        const original = originalTextMap.get(node) || current;
-        const translated = this.translateString(original);
+        const previous = originalTextMap.get(node);
+        if (previous?.translated === current) return;
+        const translated = this.translateString(current);
         if (translated !== null && translated !== current) {
+          originalTextMap.set(node, { original: current, translated });
           node.nodeValue = translated;
         }
       }
@@ -235,9 +236,9 @@ class TranslationEngine {
 
     if (node.nodeType === Node.TEXT_NODE) {
       if (originalTextMap.has(node)) {
-        const orig = originalTextMap.get(node);
-        if (orig !== undefined && node.nodeValue !== orig) {
-          node.nodeValue = orig;
+        const saved = originalTextMap.get(node);
+        if (saved && node.nodeValue === saved.translated) {
+          node.nodeValue = saved.original;
         }
       }
       return;
@@ -248,8 +249,8 @@ class TranslationEngine {
       if (originalAttrMap.has(el)) {
         const saved = originalAttrMap.get(el);
         if (saved) {
-          for (const [attr, origVal] of Object.entries(saved)) {
-            el.setAttribute(attr, origVal);
+          for (const [attr, values] of Object.entries(saved)) {
+            if (el.getAttribute(attr) === values.translated) el.setAttribute(attr, values.original);
           }
         }
       }
@@ -313,6 +314,10 @@ class TranslationEngine {
               this.scheduledNodes.push(n);
             }
           }
+        } else if (m.type === "characterData") {
+          if (!this.isEditable(m.target)) this.scheduledNodes.push(m.target);
+        } else if (m.type === "attributes" && m.target instanceof Element) {
+          if (!this.isEditable(m.target)) this.scheduledNodes.push(m.target);
         }
       }
 
@@ -325,6 +330,9 @@ class TranslationEngine {
     this.observer.observe(document.body, {
       childList: true,
       subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["placeholder", "title", "aria-label", "value"],
     });
   }
 
@@ -339,6 +347,9 @@ class TranslationEngine {
 
   public activate() {
     if (typeof document === "undefined") return;
+    if (this.originalDocumentLang === null) {
+      this.originalDocumentLang = document.documentElement.getAttribute("lang");
+    }
     document.documentElement.lang = "pt-BR";
     this.injectTypographyStyles();
     this.walkAndTranslate(document.body);
@@ -349,7 +360,8 @@ class TranslationEngine {
     if (typeof document === "undefined") return;
     this.disconnectObserver();
     this.removeTypographyStyles();
-    document.documentElement.lang = "en";
+    if (this.originalDocumentLang === null) document.documentElement.removeAttribute("lang");
+    else document.documentElement.setAttribute("lang", this.originalDocumentLang);
     this.walkAndRestore(document.body);
   }
 

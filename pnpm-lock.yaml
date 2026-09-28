@@ -4,17 +4,19 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@paperclipai/shared': file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz
+
 importers:
 
   .:
-    dependencies:
+    devDependencies:
       '@paperclipai/plugin-sdk':
         specifier: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz
         version: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz(react@19.3.0)
       '@paperclipai/shared':
         specifier: file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz
         version: file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz
-    devDependencies:
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.0
@@ -268,7 +270,7 @@ packages:
     resolution: {integrity: sha512-J1yXrIlNDZVzE3ada310xeAw7nH8yCAyLPuUIsjKatFPmfn5bS1oW+cM+QsGOtVWd5nhSpbwZWx/rue+r5Z+PA==}
 
   '@paperclipai/plugin-sdk@file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz':
-    resolution: {integrity: sha512-UqaQHOWv8Jf+gz7gZcQCk1/zIj2oAgqRz96bdhzQ142XPmAgEsOUOGVJEKbMALiXgbwG1+AcA5AtkwQF39I2XQ==, tarball: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz}
+    resolution: {integrity: sha512-ro1p9qyCIDS5RyonL+dhjNkoewbgXrBJFb3TGT7px7DWWzzAzwQk2joZrT0FjYrfkLAu1ZZj6aU+oNMtoYXhjw==, tarball: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz}
     version: 1.0.0
     engines: {node: '>=24.11.0'}
     hasBin: true
@@ -278,11 +280,8 @@ packages:
       react:
         optional: true
 
-  '@paperclipai/shared@0.3.1':
-    resolution: {integrity: sha512-ezo1DTqH2OeW4w1BvDKhtMAep7ZxO25ITD62lCw24ez7diy2sPXSHwiNDovG6OsDFqgjMXsxK63r4GndWVjhDA==}
-
   '@paperclipai/shared@file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz':
-    resolution: {integrity: sha512-R4jH+tAK/Hon+evh8NDwS/izfQ26I4ix6InhJXmCtE9/5/IMAWqur6fdl+vh5Dca+h0t+vCjvWW46+aKq1rVyg==, tarball: file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz}
+    resolution: {integrity: sha512-ngzyg5aEJn7XSuCERLztGblh9+BKPu/0hXfNtOKutduWnBBA/+4bKwXefeRGmEsP1EL9z4gm5tkjrTDgc9/1kA==, tarball: file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz}
     version: 0.3.1
     engines: {node: '>=24.11.0'}
 
@@ -836,9 +835,6 @@ packages:
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
   zod@4.6.5:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
@@ -973,14 +969,10 @@ snapshots:
 
   '@paperclipai/plugin-sdk@file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz(react@19.3.0)':
     dependencies:
-      '@paperclipai/shared': 0.3.1
+      '@paperclipai/shared': file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz
       zod: 4.6.5
     optionalDependencies:
       react: 19.3.0
-
-  '@paperclipai/shared@0.3.1':
-    dependencies:
-      zod: 3.25.76
 
   '@paperclipai/shared@file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz':
     dependencies:
@@ -1437,7 +1429,5 @@ snapshots:
   xml-name-validator@5.0.0: {}
 
   xmlchars@2.2.0: {}
-
-  zod@3.25.76: {}
 
   zod@4.6.5: {}

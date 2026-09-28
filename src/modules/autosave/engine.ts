@@ -11,7 +11,7 @@
 
 import { getSettings, subscribeSettings } from "../../config/settings.js";
 
-export type AutoSaveStatus = "idle" | "in_debounce" | "saved";
+export type AutoSaveStatus = "idle" | "in_debounce" | "saved" | "error";
 
 type Listener = (status: AutoSaveStatus) => void;
 
@@ -246,10 +246,10 @@ class AutoSaveEngine {
   /**
    * Confirma o rascunho de forma não-destrutiva sem forçar perda de foco
    */
-  private commitActiveDraft() {
+  private commitActiveDraft(): boolean {
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !this.isEditableElement(active)) {
-      return;
+      return false;
     }
 
     const isInputOrTextarea = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
@@ -260,7 +260,7 @@ class AutoSaveEngine {
     if (typeof onSave === "function") {
       try {
         onSave(value);
-        return;
+        return true;
       } catch {
         // Segue fallback
       }
@@ -272,11 +272,12 @@ class AutoSaveEngine {
     if (typeof onCommit === "function" && !immediate) {
       try {
         onCommit(value);
-        return;
+        return true;
       } catch {
         // Segue fallback
       }
     }
+    return false;
   }
 
   /**
@@ -376,30 +377,26 @@ class AutoSaveEngine {
     });
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
 
-    // Polling regular via requestAnimationFrame e intervalo curto para cobrir transições suaves
-    const interval = setInterval(restore, 25);
-    let rafId: number;
-    const rafLoop = () => {
-      if (!isGuarding) return;
-      restore();
-      rafId = requestAnimationFrame(rafLoop);
-    };
-    rafId = requestAnimationFrame(rafLoop);
-
-    const timer = setTimeout(() => {
-      cleanup();
-    }, durationMs);
+    restore();
 
     const cleanup = () => {
       isGuarding = false;
-      clearInterval(interval);
-      cancelAnimationFrame(rafId);
       clearTimeout(timer);
       observer.disconnect();
+      window.removeEventListener("pointerdown", abortOnUserNavigation, true);
+      window.removeEventListener("keydown", abortOnUserNavigation, true);
       if (this.activeGuardCleanup === cleanup) {
         this.activeGuardCleanup = null;
       }
     };
+
+    const abortOnUserNavigation = (event: Event) => {
+      const keyboardEvent = event instanceof KeyboardEvent ? event : null;
+      if (event.type === "pointerdown" || keyboardEvent?.key === "Tab") cleanup();
+    };
+    window.addEventListener("pointerdown", abortOnUserNavigation, true);
+    window.addEventListener("keydown", abortOnUserNavigation, true);
+    const timer = setTimeout(cleanup, durationMs);
 
     this.activeGuardCleanup = cleanup;
   }
@@ -407,8 +404,15 @@ class AutoSaveEngine {
   /**
    * Localiza e aciona o botão de salvar alterações no rodapé do Agente
    */
-  private triggerAgentFooterSave(): boolean {
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("footer button, div.agent-settings-form button, form button"));
+  private triggerScopedSave(snapshot: FocusTargetSnapshot): boolean {
+    const target = this.findSnapshotTarget(snapshot);
+    const form = target?.closest("form");
+    if (!form) return false;
+    const buttons = Array.from(
+      form.querySelectorAll<HTMLButtonElement>(
+        'button[type="submit"], button[data-testid*="save"], button[data-testid*="Save"]',
+      ),
+    );
     for (const btn of buttons) {
       const text = (btn.textContent || "").trim().toLowerCase();
       if (
@@ -445,14 +449,14 @@ class AutoSaveEngine {
     }
 
     // 3. Confirma o rascunho de forma não-destrutiva
-    this.commitActiveDraft();
+    const draftCommitted = this.commitActiveDraft();
 
     // 4. Aguarda frame e aciona persistência no rodapé se aplicável
     setTimeout(() => {
-      this.triggerAgentFooterSave();
+      const saveTriggered = snapshot ? this.triggerScopedSave(snapshot) : false;
 
-      // 5. Define estado como 'saved' (Verde)
-      this.setStatus("saved");
+      // Só comunica sucesso quando houve uma operação de persistência conhecida.
+      this.setStatus(draftCommitted || saveTriggered ? "saved" : "error");
 
       // 6. Inicia contador de 2000ms no verde
       if (this.savedTimer) {
@@ -460,7 +464,7 @@ class AutoSaveEngine {
       }
       this.savedTimer = setTimeout(() => {
         this.savedTimer = null;
-        if (this.status === "saved") {
+        if (this.status === "saved" || this.status === "error") {
           this.setStatus("idle"); // Volta para o Azul
         }
       }, 2000);

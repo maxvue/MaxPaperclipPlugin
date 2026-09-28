@@ -70,7 +70,7 @@ export function unarchiveSession(companyId: string, agentRef: string, sessionId:
   saveArchivedSessionIds(companyId, agentRef, archived);
 }
 
-export function loadDeletedSessionIds(companyId: string, agentRef: string): Set<string> {
+export function loadLocallyHiddenSessionIds(companyId: string, agentRef: string): Set<string> {
   if (typeof window === "undefined" || !window.localStorage) return new Set();
   try {
     const raw = window.localStorage.getItem(getDeletedSessionsKey(companyId, agentRef));
@@ -82,7 +82,7 @@ export function loadDeletedSessionIds(companyId: string, agentRef: string): Set<
   }
 }
 
-export function saveDeletedSessionIds(companyId: string, agentRef: string, ids: Set<string>): void {
+export function saveLocallyHiddenSessionIds(companyId: string, agentRef: string, ids: Set<string>): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
     window.localStorage.setItem(getDeletedSessionsKey(companyId, agentRef), JSON.stringify(Array.from(ids)));
@@ -91,10 +91,10 @@ export function saveDeletedSessionIds(companyId: string, agentRef: string, ids: 
   }
 }
 
-export function deleteSessionPermanently(companyId: string, agentRef: string, sessionId: string): void {
-  const deleted = loadDeletedSessionIds(companyId, agentRef);
-  deleted.add(sessionId);
-  saveDeletedSessionIds(companyId, agentRef, deleted);
+export function hideSessionLocally(companyId: string, agentRef: string, sessionId: string): void {
+  const hidden = loadLocallyHiddenSessionIds(companyId, agentRef);
+  hidden.add(sessionId);
+  saveLocallyHiddenSessionIds(companyId, agentRef, hidden);
 
   // Se a sessão estiver na lista de arquivadas, limpa também
   const archived = loadArchivedSessionIds(companyId, agentRef);
@@ -144,96 +144,95 @@ export function groupCommentsIntoSessions(
 ): { sessions: ChatSession[]; messagesBySession: Map<string, ChatMessage[]> } {
   const customTitles = loadCustomTitles(companyId, agentRef);
   const archivedIds = loadArchivedSessionIds(companyId, agentRef);
-  const deletedIds = loadDeletedSessionIds(companyId, agentRef);
+  const deletedIds = loadLocallyHiddenSessionIds(companyId, agentRef);
 
   const sessions: ChatSession[] = [];
   const messagesBySession = new Map<string, ChatMessage[]>();
-
-  // Ordena cronologicamente
   const sorted = [...comments].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
   );
+  const buckets = new Map<
+    number,
+    { messages: ChatMessage[]; firstUserText: string | null; createdAt: string; updatedAt: string }
+  >();
+  let inferredGeneration = 0;
 
-  let currentGen = 0;
-  let currentSessionId = `session-gen-${currentGen}`;
-  let currentMessages: ChatMessage[] = [];
-  let firstUserText: string | null = null;
-  let sessionCreatedAt = sorted[0] ? new Date(sorted[0].createdAt).toISOString() : new Date().toISOString();
-  let sessionUpdatedAt = sessionCreatedAt;
-
-  const pushCurrentSession = (index: number) => {
-    // Registra mensagens para visibilidade no thread mesmo se a sessão foi excluída
-    messagesBySession.set(currentSessionId, [...currentMessages]);
-
-    // Se a sessão foi deletada definitivamente, não adiciona ao array de sessões exibidas
-    if (deletedIds.has(currentSessionId)) {
-      return;
-    }
-
-    const snippet = currentMessages.length > 0
-      ? currentMessages[currentMessages.length - 1].text.slice(0, 70).replace(/\n/g, " ")
-      : "Nova sessão iniciada";
-
-    const customTitle = customTitles[currentSessionId];
-    const title = customTitle || generateSessionTitle(firstUserText, index);
-    const isArchived = archivedIds.has(currentSessionId);
-
-    sessions.push({
-      id: currentSessionId,
-      agentRef,
-      companyId,
-      issueId,
-      generation: currentGen,
-      title,
-      createdAt: sessionCreatedAt,
-      updatedAt: sessionUpdatedAt,
-      messagesCount: currentMessages.length,
-      snippet,
-      isCustomTitle: Boolean(customTitle),
-      isArchived,
-      isDeleted: false,
-    });
+  const ensureBucket = (generation: number, createdAt: string) => {
+    const existing = buckets.get(generation);
+    if (existing) return existing;
+    const created = {
+      messages: [],
+      firstUserText: null,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    buckets.set(generation, created);
+    return created;
   };
 
-  for (const comment of sorted) {
-    const isBoundary =
-      comment.conversationSessionGeneration != null ||
-      comment.body?.trim() === "/new";
+  if (sorted.length === 0) ensureBucket(0, new Date().toISOString());
 
-    if (isBoundary) {
-      // Fecha a sessão atual e inicia a próxima
-      pushCurrentSession(currentGen);
-      currentGen += 1;
-      currentSessionId = `session-gen-${currentGen}`;
-      currentMessages = [];
-      firstUserText = null;
-      sessionCreatedAt = new Date(comment.createdAt).toISOString();
-      sessionUpdatedAt = sessionCreatedAt;
+  for (const comment of sorted) {
+    const createdAt = new Date(comment.createdAt).toISOString();
+    const canonicalGeneration =
+      typeof comment.conversationSessionGeneration === "number" &&
+      Number.isInteger(comment.conversationSessionGeneration) &&
+      comment.conversationSessionGeneration >= 0
+        ? comment.conversationSessionGeneration
+        : null;
+
+    if (comment.body?.trim() === "/new") {
+      inferredGeneration = canonicalGeneration ?? inferredGeneration + 1;
+      ensureBucket(inferredGeneration, createdAt);
       continue;
     }
 
+    const generation = canonicalGeneration ?? inferredGeneration;
+    inferredGeneration = generation;
+    const bucket = ensureBucket(generation, createdAt);
     const text = comment.body ?? "";
-    const isUser = Boolean(comment.authorUserId && !comment.authorAgentId && comment.authorType !== "agent");
+    const isUser = Boolean(
+      comment.authorType === "user" ||
+      (comment.authorUserId && !comment.authorAgentId && comment.authorType !== "agent"),
+    );
     const authorKind = isUser ? "user" : comment.authorType === "system" ? "system" : "agent";
-
-    if (isUser && !firstUserText && text.trim()) {
-      firstUserText = text.trim();
-    }
-
-    sessionUpdatedAt = new Date(comment.createdAt).toISOString();
-
-    currentMessages.push({
+    if (isUser && !bucket.firstUserText && text.trim()) bucket.firstUserText = text.trim();
+    bucket.updatedAt = createdAt;
+    bucket.messages.push({
       id: comment.id,
       author: authorKind,
       text,
-      createdAt: new Date(comment.createdAt).toISOString(),
-      sessionGeneration: currentGen,
+      createdAt,
+      sessionGeneration: generation,
       clientRequestId: comment.clientRequestId,
     });
   }
 
-  // Empurra a sessão ativa final
-  pushCurrentSession(currentGen);
+  const orderedBuckets = [...buckets.entries()].sort(([left], [right]) => left - right);
+  for (const [index, [generation, bucket]] of orderedBuckets.entries()) {
+    const sessionId = `session-gen-${generation}`;
+    messagesBySession.set(sessionId, [...bucket.messages]);
+    if (deletedIds.has(sessionId)) continue;
+    const snippet = bucket.messages.length > 0
+      ? bucket.messages[bucket.messages.length - 1].text.slice(0, 70).replace(/\n/g, " ")
+      : "Nova sessão iniciada";
+    const customTitle = customTitles[sessionId];
+    sessions.push({
+      id: sessionId,
+      agentRef,
+      companyId,
+      issueId,
+      generation,
+      title: customTitle || generateSessionTitle(bucket.firstUserText, index),
+      createdAt: bucket.createdAt,
+      updatedAt: bucket.updatedAt,
+      messagesCount: bucket.messages.length,
+      snippet,
+      isCustomTitle: Boolean(customTitle),
+      isArchived: archivedIds.has(sessionId),
+      isDeleted: false,
+    });
+  }
 
   return { sessions, messagesBySession };
 }

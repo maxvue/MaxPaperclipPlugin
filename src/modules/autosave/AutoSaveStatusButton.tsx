@@ -82,6 +82,13 @@ export function AutoSaveStatusButton({ context }: AutoSaveStatusButtonProps) {
 
   const getStatusConfig = () => {
     switch (status) {
+      case "error":
+        return {
+          title: "Auto-save: não foi possível confirmar a persistência",
+          colorClass: "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]",
+          label: "Não confirmado",
+          textClass: "text-rose-500",
+        };
       case "in_debounce":
         return {
           title: "Auto-save: Salvando alterações em 1s...",

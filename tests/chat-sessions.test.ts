@@ -14,8 +14,8 @@ import {
   archiveSession,
   unarchiveSession,
   loadArchivedSessionIds,
-  deleteSessionPermanently,
-  loadDeletedSessionIds,
+  hideSessionLocally,
+  loadLocallyHiddenSessionIds,
   type RawIssueComment,
 } from "../src/modules/chat-sessions/store.js";
 import type { ChatSession, ChatMessage } from "../src/modules/chat-sessions/types.js";
@@ -149,6 +149,42 @@ describe("MaxPaperclipPlugin - Módulo de Sessões de Chat (Chat Sessions)", () 
       const msgsSess2 = messagesBySession.get(sessions[1].id) ?? [];
       expect(msgsSess2).toHaveLength(2);
       expect(msgsSess2[0].text).toContain("verificar deploy");
+    });
+
+    it("deve manter comentários com a mesma geração canônica na mesma sessão", () => {
+      const comments: RawIssueComment[] = [
+        {
+          id: "c1",
+          body: "Pergunta",
+          authorType: "user",
+          conversationSessionGeneration: 7,
+          createdAt: "2026-09-28T10:00:00Z",
+        },
+        {
+          id: "c2",
+          body: "Resposta",
+          authorType: "agent",
+          conversationSessionGeneration: 7,
+          createdAt: "2026-09-28T10:01:00Z",
+        },
+        {
+          id: "c3",
+          body: "Complemento",
+          authorType: "user",
+          conversationSessionGeneration: 7,
+          createdAt: "2026-09-28T10:02:00Z",
+        },
+      ];
+
+      const { sessions, messagesBySession } = groupCommentsIntoSessions(
+        "comp-1",
+        "agent-1",
+        "issue-1",
+        comments,
+      );
+
+      expect(sessions).toHaveLength(1);
+      expect(messagesBySession.get("session-gen-7")).toHaveLength(3);
     });
   });
 
@@ -392,12 +428,12 @@ describe("MaxPaperclipPlugin - Módulo de Sessões de Chat (Chat Sessions)", () 
     });
   });
 
-  describe("Remoção Definitiva de Conversas", () => {
+  describe("Ocultação local de conversas", () => {
     beforeEach(() => {
       window.localStorage.clear();
     });
 
-    it("deve salvar sessão como deletada permanentemente e limpar dos arquivados", () => {
+    it("deve salvar sessão como oculta neste navegador e limpar dos arquivados", () => {
       const companyId = "comp-3";
       const agentRef = "dev";
       const sessionId = "session-gen-1";
@@ -405,19 +441,19 @@ describe("MaxPaperclipPlugin - Módulo de Sessões de Chat (Chat Sessions)", () 
       archiveSession(companyId, agentRef, sessionId);
       expect(loadArchivedSessionIds(companyId, agentRef).has(sessionId)).toBe(true);
 
-      // Deleta permanentemente
-      deleteSessionPermanently(companyId, agentRef, sessionId);
+      // Oculta somente neste navegador
+      hideSessionLocally(companyId, agentRef, sessionId);
 
-      expect(loadDeletedSessionIds(companyId, agentRef).has(sessionId)).toBe(true);
+      expect(loadLocallyHiddenSessionIds(companyId, agentRef).has(sessionId)).toBe(true);
       expect(loadArchivedSessionIds(companyId, agentRef).has(sessionId)).toBe(false);
     });
 
-    it("deve ocultar e descartar sessões deletadas da lista retornada por groupCommentsIntoSessions", () => {
+    it("deve omitir sessões ocultas da lista retornada por groupCommentsIntoSessions", () => {
       const companyId = "comp-4";
       const agentRef = "qa";
       const issueId = "iss-2";
 
-      deleteSessionPermanently(companyId, agentRef, "session-gen-0");
+      hideSessionLocally(companyId, agentRef, "session-gen-0");
 
       const comments: RawIssueComment[] = [
         {
@@ -451,7 +487,7 @@ describe("MaxPaperclipPlugin - Módulo de Sessões de Chat (Chat Sessions)", () 
       expect(sessions[0].id).toBe("session-gen-1");
       expect(sessions[0].title).toBe("Mensagem sessão preservada");
 
-      // As mensagens da sessão deletada continuam mapeadas para preservar lógica de DOM
+      // As mensagens da sessão oculta continuam mapeadas para preservar lógica de DOM
       expect(messagesBySession.has("session-gen-0")).toBe(true);
       expect(messagesBySession.has("session-gen-1")).toBe(true);
     });
