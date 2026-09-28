@@ -1,6 +1,6 @@
 {
   "name": "@max/paperclip-plugin",
-  "version": "1.1.0",
+  "version": "1.1.7",
   "description": "Plugin consolidado MaxPaperclipPlugin: Ícones, Tradutor PT-BR, Aba de Tarefas, Auto-Save e Editor de Capacidades.",
   "license": "MIT",
   "type": "module",
