@@ -4,5 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    include: ["tests/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "**/.worktrees/**", "**/dist/**"],
   },
 });
