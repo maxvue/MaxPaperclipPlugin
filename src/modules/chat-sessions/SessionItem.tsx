@@ -1,12 +1,16 @@
 import React, { useState, useRef, useEffect } from "react";
-import { MessageSquare, Edit2, Check, X } from "lucide-react";
+import { MessageSquare, Edit2, Check, X, Archive, ArchiveRestore, Trash2 } from "lucide-react";
 import type { ChatSession } from "./types.js";
 
 interface SessionItemProps {
   session: ChatSession;
   isActive: boolean;
+  isArchivedView?: boolean;
   onSelect: (session: ChatSession) => void;
   onRename: (session: ChatSession, newTitle: string) => void;
+  onArchive?: (session: ChatSession) => void;
+  onUnarchive?: (session: ChatSession) => void;
+  onDelete?: (session: ChatSession) => void;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -26,7 +30,16 @@ function formatRelativeTime(dateStr: string): string {
   }
 }
 
-export function SessionItem({ session, isActive, onSelect, onRename }: SessionItemProps) {
+export function SessionItem({
+  session,
+  isActive,
+  isArchivedView = false,
+  onSelect,
+  onRename,
+  onArchive,
+  onUnarchive,
+  onDelete,
+}: SessionItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.title);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -70,7 +83,7 @@ export function SessionItem({ session, isActive, onSelect, onRename }: SessionIt
         <button
           type="submit"
           title="Salvar título"
-          className="p-1 hover:text-primary transition-colors text-muted-foreground"
+          className="p-1 hover:text-primary transition-colors text-muted-foreground cursor-pointer"
         >
           <Check className="w-3.5 h-3.5" />
         </button>
@@ -78,7 +91,7 @@ export function SessionItem({ session, isActive, onSelect, onRename }: SessionIt
           type="button"
           onClick={handleCancelRename}
           title="Cancelar"
-          className="p-1 hover:text-destructive transition-colors text-muted-foreground"
+          className="p-1 hover:text-destructive transition-colors text-muted-foreground cursor-pointer"
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -116,21 +129,69 @@ export function SessionItem({ session, isActive, onSelect, onRename }: SessionIt
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">
+          <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap group-hover:hidden">
             {formatRelativeTime(session.updatedAt || session.createdAt)}
           </span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditValue(session.title);
-              setIsEditing(true);
-            }}
-            title="Renomear sessão"
-            className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-foreground text-muted-foreground transition-opacity"
-          >
-            <Edit2 className="w-3 h-3" />
-          </button>
+
+          <div className="hidden group-hover:flex items-center gap-0.5">
+            {/* Botão de Renomear */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setEditValue(session.title);
+                setIsEditing(true);
+              }}
+              title="Renomear conversa"
+              className="p-1 hover:text-foreground text-muted-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
+            >
+              <Edit2 className="w-3 h-3" />
+            </button>
+
+            {/* Botão de Arquivar / Desarquivar */}
+            {isArchivedView ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onUnarchive?.(session);
+                }}
+                title="Desarquivar conversa"
+                className="p-1 hover:text-amber-500 text-muted-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
+              >
+                <ArchiveRestore className="w-3 h-3" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onArchive?.(session);
+                }}
+                title="Arquivar conversa"
+                className="p-1 hover:text-amber-500 text-muted-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
+              >
+                <Archive className="w-3 h-3" />
+              </button>
+            )}
+
+            {/* Botão de Remover Definitivamente */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onDelete?.(session);
+              }}
+              title="Remover definitivamente"
+              className="p-1 hover:text-rose-500 text-muted-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
         </div>
       </div>
 
