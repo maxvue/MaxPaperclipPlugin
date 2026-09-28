@@ -13,7 +13,7 @@ importers:
         version: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz(react@19.3.0)
       '@paperclipai/shared':
         specifier: file:/home/johnattas/GitHub/paperclip/packages/shared
-        version: file:../../../paperclip/packages/shared
+        version: file:../paperclip/packages/shared
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -221,8 +221,8 @@ packages:
   '@paperclipai/shared@0.3.1':
     resolution: {integrity: sha512-ezo1DTqH2OeW4w1BvDKhtMAep7ZxO25ITD62lCw24ez7diy2sPXSHwiNDovG6OsDFqgjMXsxK63r4GndWVjhDA==}
 
-  '@paperclipai/shared@file:../../../paperclip/packages/shared':
-    resolution: {directory: ../../../paperclip/packages/shared, type: directory}
+  '@paperclipai/shared@file:../paperclip/packages/shared':
+    resolution: {directory: ../paperclip/packages/shared, type: directory}
     engines: {node: '>=24.11.0'}
 
   '@rolldown/binding-android-arm-eabi@1.2.11':
@@ -774,7 +774,7 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  '@paperclipai/shared@file:../../../paperclip/packages/shared':
+  '@paperclipai/shared@file:../paperclip/packages/shared':
     dependencies:
       three: 0.185.1
       zod: 4.6.5
