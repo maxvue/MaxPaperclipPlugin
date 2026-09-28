@@ -15,6 +15,7 @@ import {
   Trash2,
   ClipboardList,
   Settings2,
+  Terminal,
 } from "lucide-react";
 import { usePluginData } from "@paperclipai/plugin-sdk/ui";
 import type { IssueSummary, LiveRun, PlanningBootstrap, ProjectSummary } from "./types.js";
@@ -22,6 +23,7 @@ import {
   fetchCompanyTasks,
   fetchCompanyProjects,
   fetchCompanyLiveRuns,
+  fetchTaskStatuses,
   archiveIssue,
   unarchiveIssue,
   deleteIssue,
@@ -33,6 +35,7 @@ import { TaskRow, type RunningAgentInfo } from "./TaskRow.js";
 import { StatusIcon } from "./StatusIcon.js";
 import { TaskDeleteConfirmModal } from "./TaskDeleteConfirmModal.js";
 import { PlanningDialog } from "./PlanningDialog.js";
+import { TaskLogsModal } from "./TaskLogsModal.js";
 
 interface TaskSidebarRightColumnProps {
   context?: {
@@ -94,6 +97,13 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
     companyId: companyId ?? "",
   });
 
+  // Estado do modal de logs de tarefas
+  const [logsModalTarget, setLogsModalTarget] = useState<{
+    projectId: string;
+    projectName: string;
+    taskType: "dev" | "build";
+  } | null>(null);
+
   // Estado do modal de confirmação de exclusão
   const [deleteModalState, setDeleteModalState] = useState<{
     isOpen: boolean;
@@ -112,15 +122,19 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
     if (!silent) setLoading(true);
 
     try {
-      const [fetchedTasks, fetchedProjects, fetchedLiveRuns] = await Promise.all([
+      const [fetchedTasks, fetchedProjects, fetchedLiveRuns, taskStatuses] = await Promise.all([
         fetchCompanyTasks(companyId, true),
         fetchCompanyProjects(companyId),
         fetchCompanyLiveRuns(companyId),
+        fetchTaskStatuses(),
       ]);
 
       setTasks(fetchedTasks);
       setProjects(fetchedProjects);
       setLiveRuns(fetchedLiveRuns);
+      if (taskStatuses) {
+        sidebarStore.setAllTaskStatuses(taskStatuses);
+      }
     } catch (err) {
       console.warn("Erro ao atualizar dados do TaskSidebar:", err);
     } finally {
@@ -466,16 +480,24 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
   // Execução de NPM RUN DEV e NPM RUN BUILD
   const handleToggleRunDev = useCallback(
     async (projectId: string) => {
-      sidebarStore.toggleRunDev(projectId);
-      await executeProjectTask(projectId, "dev");
+      const current = sidebarStore.getSnapshot().runDevStates[projectId] ?? "parado";
+      sidebarStore.setRunDevStatus(projectId, current === "rodando" ? "parado" : "rodando");
+      const result = await executeProjectTask(projectId, "dev");
+      if (result?.status) {
+        sidebarStore.setRunDevStatus(projectId, result.status);
+      }
     },
     [],
   );
 
   const handleToggleRunBuild = useCallback(
     async (projectId: string) => {
-      sidebarStore.toggleRunBuild(projectId);
-      await executeProjectTask(projectId, "build");
+      const current = sidebarStore.getSnapshot().runBuildStates[projectId] ?? "parado";
+      sidebarStore.setRunBuildStatus(projectId, current === "rodando" ? "parado" : "rodando");
+      const result = await executeProjectTask(projectId, "build");
+      if (result?.status) {
+        sidebarStore.setRunBuildStatus(projectId, result.status);
+      }
     },
     [],
   );
@@ -590,6 +612,30 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
         .botao-run-dev-projeto.status-task-parado,
         .botao-build-projeto.status-task-parado {
           color: #888888;
+        }
+        .botao-run-dev-projeto.status-task-erro,
+        .botao-build-projeto.status-task-erro {
+          color: #ef4444;
+          opacity: 1;
+        }
+        .botao-logs-task-projeto {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          padding: 2px;
+          border: 1px solid transparent;
+          border-radius: 4px;
+          background: transparent;
+          cursor: pointer;
+          color: currentColor;
+          opacity: 0.65;
+          transition: opacity 0.15s, background-color 0.15s, color 0.15s;
+        }
+        .botao-logs-task-projeto:hover {
+          opacity: 1;
+          background: rgba(128, 128, 128, 0.15);
+          color: #3b82f6;
         }
         .botao-arquivados-ativo {
           color: #f59e0b !important;
@@ -909,45 +955,81 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
                             </svg>
                           </button>
 
-                          {/* Botão NPM RUN DEV */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleRunDev(group.id);
-                            }}
-                            className={`botao-run-dev-projeto status-task-${runDevStatus}`}
-                            title={`NPM RUN DEV (${runDevStatus === "rodando" ? "rodando" : "parado"})`}
-                            aria-label={`Executar NPM RUN DEV em ${group.name}`}
-                          >
-                            {runDevStatus === "rodando" ? (
-                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 48 48">
-                                <path fill="currentColor" fillRule="evenodd" d="M24 44c11.046 0 20-8.954 20-20S35.046 4 24 4S4 12.954 4 24s8.954 20 20 20ZM20 24v-6.928l6 3.464L32 24l-6 3.464l-6 3.464z" />
-                              </svg>
-                            ) : (
-                              <svg viewBox="0 0 24 24" width="12" height="12">
-                                <path d="M0 0h24v24H0z" fill="none" />
-                                <path fill="currentColor" d="M6.51 18.87c.15.09.32.13.49.13s.36-.05.51-.14l10-6c.3-.18.49-.51.49-.86s-.18-.68-.49-.86l-10-6a.99.99 0 0 0-1.01-.01c-.31.18-.51.51-.51.87v12c0 .36.19.69.51.87Z" />
-                              </svg>
-                            )}
-                          </button>
+                          {/* Botão NPM RUN DEV e Logs */}
+                          <div className="inline-flex items-center">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleRunDev(group.id);
+                              }}
+                              className={`botao-run-dev-projeto status-task-${runDevStatus}`}
+                              title={`NPM RUN DEV (${runDevStatus})`}
+                              aria-label={`Executar NPM RUN DEV em ${group.name}`}
+                            >
+                              {runDevStatus === "rodando" ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 48 48">
+                                  <path fill="currentColor" fillRule="evenodd" d="M24 44c11.046 0 20-8.954 20-20S35.046 4 24 4S4 12.954 4 24s8.954 20 20 20ZM20 24v-6.928l6 3.464L32 24l-6 3.464l-6 3.464z" />
+                                </svg>
+                              ) : (
+                                <svg viewBox="0 0 24 24" width="12" height="12">
+                                  <path d="M0 0h24v24H0z" fill="none" />
+                                  <path fill="currentColor" d="M6.51 18.87c.15.09.32.13.49.13s.36-.05.51-.14l10-6c.3-.18.49-.51.49-.86s-.18-.68-.49-.86l-10-6a.99.99 0 0 0-1.01-.01c-.31.18-.51.51-.51.87v12c0 .36.19.69.51.87Z" />
+                                </svg>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setLogsModalTarget({
+                                  projectId: group.id,
+                                  projectName: group.name,
+                                  taskType: "dev",
+                                });
+                              }}
+                              className="botao-logs-task-projeto text-muted-foreground"
+                              title={`Ver logs de DEV de ${group.name}`}
+                              aria-label={`Ver logs de DEV de ${group.name}`}
+                            >
+                              <Terminal className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
 
-                          {/* Botão NPM RUN BUILD */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleRunBuild(group.id);
-                            }}
-                            className={`botao-build-projeto status-task-${runBuildStatus}`}
-                            title={`NPM RUN BUILD (${runBuildStatus === "rodando" ? "rodando" : "parado"})`}
-                            aria-label={`Executar NPM RUN BUILD em ${group.name}`}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12">
-                              <path d="M0 0h24v24H0z" fill="none" />
-                              <path fill="currentColor" d="M9.06 1.93C7.17 1.92 5.33 3.74 6.17 6H3a2 2 0 0 0-2 2v2a1 1 0 0 0 1 1h9V8h2v3h9a1 1 0 0 0 1-1V8a2 2 0 0 0-2-2h-3.17C19 2.73 14.6.42 12.57 3.24L12 4l-.57-.78c-.63-.89-1.5-1.28-2.37-1.29M9 4c.89 0 1.34 1.08.71 1.71S8 5.89 8 5a1 1 0 0 1 1-1m6 0c.89 0 1.34 1.08.71 1.71S14 5.89 14 5a1 1 0 0 1 1-1M2 12v8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-8h-9v8h-2v-8z" />
-                            </svg>
-                          </button>
+                          {/* Botão NPM RUN BUILD e Logs */}
+                          <div className="inline-flex items-center">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleRunBuild(group.id);
+                              }}
+                              className={`botao-build-projeto status-task-${runBuildStatus}`}
+                              title={`NPM RUN BUILD (${runBuildStatus})`}
+                              aria-label={`Executar NPM RUN BUILD em ${group.name}`}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12">
+                                <path d="M0 0h24v24H0z" fill="none" />
+                                <path fill="currentColor" d="M9.06 1.93C7.17 1.92 5.33 3.74 6.17 6H3a2 2 0 0 0-2 2v2a1 1 0 0 0 1 1h9V8h2v3h9a1 1 0 0 0 1-1V8a2 2 0 0 0-2-2h-3.17C19 2.73 14.6.42 12.57 3.24L12 4l-.57-.78c-.63-.89-1.5-1.28-2.37-1.29M9 4c.89 0 1.34 1.08.71 1.71S8 5.89 8 5a1 1 0 0 1 1-1m6 0c.89 0 1.34 1.08.71 1.71S14 5.89 14 5a1 1 0 0 1 1-1M2 12v8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-8h-9v8h-2v-8z" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setLogsModalTarget({
+                                  projectId: group.id,
+                                  projectName: group.name,
+                                  taskType: "build",
+                                });
+                              }}
+                              className="botao-logs-task-projeto text-muted-foreground"
+                              title={`Ver logs de BUILD de ${group.name}`}
+                              aria-label={`Ver logs de BUILD de ${group.name}`}
+                            >
+                              <Terminal className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
 
                           {/* Botão Ocultar Projeto */}
                           <button
@@ -1220,6 +1302,15 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
           bootstrap={planning.data}
           onClose={() => setPlanningTarget(null)}
           onSaved={planning.refresh}
+        />
+      )}
+      {logsModalTarget && (
+        <TaskLogsModal
+          open={Boolean(logsModalTarget)}
+          projectId={logsModalTarget.projectId}
+          projectName={logsModalTarget.projectName}
+          taskType={logsModalTarget.taskType}
+          onClose={() => setLogsModalTarget(null)}
         />
       )}
     </>
