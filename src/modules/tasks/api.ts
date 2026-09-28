@@ -80,17 +80,10 @@ export async function fetchCompanyTasks(
  */
 export async function fetchCompanyProjects(companyId: string): Promise<ProjectSummary[]> {
   try {
-    const pageSize = 250;
-    const projects: ProjectSummary[] = [];
-    for (let offset = 0; offset < 10_000; offset += pageSize) {
-      const raw = await hostFetchJson<ProjectSummary[] | { projects: ProjectSummary[] }>(
-        `/api/companies/${companyId}/projects?limit=${pageSize}&offset=${offset}`,
-      );
-      const page = Array.isArray(raw) ? raw : (raw?.projects ?? []);
-      projects.push(...page);
-      if (page.length < pageSize) break;
-    }
-    return projects;
+    const raw = await hostFetchJson<ProjectSummary[] | { projects: ProjectSummary[] }>(
+      `/api/companies/${companyId}/projects?includeArchived=true`,
+    );
+    return Array.isArray(raw) ? raw : (raw?.projects ?? []);
   } catch (err) {
     console.warn("Erro ao buscar projetos da empresa:", err);
     return [];

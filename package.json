@@ -3,6 +3,22 @@
   "version": "1.1.7",
   "description": "Plugin consolidado MaxPaperclipPlugin: Ícones, Tradutor PT-BR, Aba de Tarefas, Auto-Save e Editor de Capacidades.",
   "license": "MIT",
+  "author": "MaxVue contributors",
+  "homepage": "https://github.com/maxvue/MaxPaperclipPlugin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maxvue/MaxPaperclipPlugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/maxvue/MaxPaperclipPlugin/issues"
+  },
+  "keywords": [
+    "paperclip",
+    "paperclip-plugin",
+    "autosave",
+    "iconify",
+    "task-management"
+  ],
   "type": "module",
   "exports": {
     ".": "./dist/worker.js",

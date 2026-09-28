@@ -118,6 +118,16 @@ const plugin = definePlugin({
       const project = await ctx.projects.get(projectId, companyId);
       if (!project) throw new Error("projeto não encontrado na empresa ativa");
       const projectName = project.name;
+      const currentStatus = taskProcessManager.getProcessStatus(companyId, projectId, taskType).status;
+      if (action === "stop" || (action === "toggle" && currentStatus === "rodando")) {
+        return await taskProcessManager.executeTask({
+          companyId,
+          projectId,
+          projectName,
+          taskType,
+          action,
+        });
+      }
       const workspace = await ctx.projects.getPrimaryWorkspace(projectId, companyId);
       const rootDir = workspace?.path.replace(/[/\\]+$/, "");
 

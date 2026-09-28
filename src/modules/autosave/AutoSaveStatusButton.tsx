@@ -82,6 +82,13 @@ export function AutoSaveStatusButton({ context }: AutoSaveStatusButtonProps) {
 
   const getStatusConfig = () => {
     switch (status) {
+      case "requested":
+        return {
+          title: "Auto-save: gravação solicitada; aguardando confirmação da aplicação",
+          colorClass: "bg-sky-500 shadow-[0_0_8px_rgba(14,165,233,0.6)]",
+          label: "Solicitado",
+          textClass: "text-sky-500",
+        };
       case "error":
         return {
           title: "Auto-save: não foi possível confirmar a persistência",

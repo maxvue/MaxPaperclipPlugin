@@ -93,8 +93,8 @@ export function TaskLogsModal({
   };
 
   const handleClear = async () => {
-    await clearTaskLogs(companyId, projectId, taskType);
-    setData((prev) => (prev ? { ...prev, logs: [] } : null));
+    const cleared = await clearTaskLogs(companyId, projectId, taskType);
+    if (cleared) setData((prev) => (prev ? { ...prev, logs: [] } : null));
   };
 
   if (!open) return null;
