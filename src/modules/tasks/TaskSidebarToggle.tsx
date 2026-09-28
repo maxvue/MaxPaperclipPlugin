@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { sidebarStore, useSidebarStore } from "./store.js";
 import { TaskSidebarRightColumn } from "./TaskSidebarRightColumn.js";
+import { AgentChatSessionsSidebar } from "../chat-sessions/AgentChatSessionsSidebar.js";
 import { getSettings, subscribeSettings } from "../../config/settings.js";
 
 interface TaskSidebarToggleProps {
@@ -160,6 +161,9 @@ export function TaskSidebarToggle({ context }: TaskSidebarToggleProps) {
             container,
           )
         : null}
+
+      {/* Renderiza o painel de sessões de chat à esquerda em rotas de chat */}
+      {isPortalOwner ? <AgentChatSessionsSidebar /> : null}
     </>
   );
 }

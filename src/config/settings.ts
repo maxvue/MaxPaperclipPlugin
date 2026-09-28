@@ -10,16 +10,18 @@ export interface MaxPluginSettings {
   iconify: boolean;
   tasks: boolean;
   capabilities: boolean;
+  chatSessions: boolean;
 }
 
 const STORAGE_KEY = "max_paperclip_plugin_settings";
 
-const DEFAULT_SETTINGS: MaxPluginSettings = {
+export const DEFAULT_SETTINGS: MaxPluginSettings = {
   autosave: true,
   translator: true,
   iconify: true,
   tasks: true,
   capabilities: true,
+  chatSessions: true,
 };
 
 type SettingsListener = (settings: MaxPluginSettings) => void;
@@ -41,6 +43,7 @@ export function getSettings(): MaxPluginSettings {
       iconify: typeof parsed.iconify === "boolean" ? parsed.iconify : DEFAULT_SETTINGS.iconify,
       tasks: typeof parsed.tasks === "boolean" ? parsed.tasks : DEFAULT_SETTINGS.tasks,
       capabilities: typeof parsed.capabilities === "boolean" ? parsed.capabilities : DEFAULT_SETTINGS.capabilities,
+      chatSessions: typeof parsed.chatSessions === "boolean" ? parsed.chatSessions : DEFAULT_SETTINGS.chatSessions,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

@@ -26,7 +26,7 @@ describe("MaxPaperclipPlugin - Manifesto e Configurações", () => {
   });
 
   it("deve registrar todos os 5 slots de UI nos locais e ordens corretas", () => {
-    const slots = manifest.ui?.slots ?? [];
+    const slots = (manifest.ui?.slots ?? []) as Array<{ id: string; [k: string]: any }>;
     expect(slots).toHaveLength(5);
 
     const autosaveSlot = slots.find((s) => s.id === "autosave-status-btn");
