@@ -612,7 +612,7 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
         style={{
           width: isOpen ? width : 0,
           opacity: isOpen ? 1 : 0,
-          order: side === "left" ? -1 : 99,
+          order: side === "left" ? -1 : 100,
           borderLeftWidth: isOpen && side === "right" ? "1px" : "0px",
           borderRightWidth: isOpen && side === "left" ? "1px" : "0px",
         }}

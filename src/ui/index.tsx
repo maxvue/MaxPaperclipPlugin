@@ -5,4 +5,5 @@ export { TaskSidebarToggle } from "../modules/tasks/TaskSidebarToggle.js";
 export { TaskSidebarRightColumn } from "../modules/tasks/TaskSidebarRightColumn.js";
 export { AgentCapabilitiesPanel } from "../modules/capabilities/AgentCapabilitiesPanel.js";
 export { AgentChatSessionsSidebar } from "../modules/chat-sessions/AgentChatSessionsSidebar.js";
+export { AgentChatContextSidebar } from "../modules/chat-context/AgentChatContextSidebar.js";
 export { getSettings, updateSetting, subscribeSettings } from "../config/settings.js";
