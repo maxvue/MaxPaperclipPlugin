@@ -29,6 +29,24 @@ export async function hostFetchJson<T>(path: string, init?: RequestInit): Promis
   return {} as T;
 }
 
+async function callPluginAction<T>(
+  companyId: string,
+  key: string,
+  params: Record<string, unknown>,
+): Promise<T> {
+  const response = await hostFetchJson<T | { data: T }>(
+    "/api/plugins/max.paperclip-plugin/bridge/action",
+    {
+      method: "POST",
+      body: JSON.stringify({ companyId, key, params }),
+    },
+  );
+  if (response && typeof response === "object" && "data" in response) {
+    return (response as { data: T }).data;
+  }
+  return response as T;
+}
+
 /**
  * Busca todas as tarefas da empresa (ativas e opcionalmente arquivadas).
  */
@@ -37,10 +55,16 @@ export async function fetchCompanyTasks(
   includeArchived = true,
 ): Promise<IssueSummary[]> {
   try {
-    const raw = await hostFetchJson<IssueSummary[] | { issues: IssueSummary[] }>(
-      `/api/companies/${companyId}/issues?limit=250`,
-    );
-    const list = Array.isArray(raw) ? raw : (raw?.issues ?? []);
+    const pageSize = 250;
+    const list: IssueSummary[] = [];
+    for (let offset = 0; offset < 10_000; offset += pageSize) {
+      const raw = await hostFetchJson<IssueSummary[] | { issues: IssueSummary[] }>(
+        `/api/companies/${companyId}/issues?limit=${pageSize}&offset=${offset}`,
+      );
+      const page = Array.isArray(raw) ? raw : (raw?.issues ?? []);
+      list.push(...page);
+      if (page.length < pageSize) break;
+    }
     if (!includeArchived) {
       return list.filter((item) => !item.hiddenAt);
     }
@@ -56,10 +80,17 @@ export async function fetchCompanyTasks(
  */
 export async function fetchCompanyProjects(companyId: string): Promise<ProjectSummary[]> {
   try {
-    const raw = await hostFetchJson<ProjectSummary[] | { projects: ProjectSummary[] }>(
-      `/api/companies/${companyId}/projects`,
-    );
-    return Array.isArray(raw) ? raw : (raw?.projects ?? []);
+    const pageSize = 250;
+    const projects: ProjectSummary[] = [];
+    for (let offset = 0; offset < 10_000; offset += pageSize) {
+      const raw = await hostFetchJson<ProjectSummary[] | { projects: ProjectSummary[] }>(
+        `/api/companies/${companyId}/projects?limit=${pageSize}&offset=${offset}`,
+      );
+      const page = Array.isArray(raw) ? raw : (raw?.projects ?? []);
+      projects.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return projects;
   } catch (err) {
     console.warn("Erro ao buscar projetos da empresa:", err);
     return [];
@@ -171,20 +202,16 @@ export interface TaskLogsResult {
  * Aciona execução de task do projeto (dev ou build) através do Task Manager do plugin.
  */
 export async function executeProjectTask(
+  companyId: string,
   projectId: string,
   taskType: "dev" | "build",
   action: "start" | "stop" | "toggle" = "toggle",
 ): Promise<TaskExecutionResult> {
   try {
-    const res = await hostFetchJson<TaskExecutionResult>(
-      `/api/plugins/max.paperclip-plugin/bridge/action`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          key: "task-manager:execute",
-          params: { projectId, taskType, action },
-        }),
-      },
+    const res = await callPluginAction<TaskExecutionResult>(
+      companyId,
+      "task-manager:execute",
+      { projectId, taskType, action },
     );
     return res;
   } catch (err) {
@@ -200,19 +227,13 @@ export async function executeProjectTask(
 /**
  * Busca status de todas as tasks ativas gerenciadas pelo plugin.
  */
-export async function fetchTaskStatuses(): Promise<
+export async function fetchTaskStatuses(companyId: string): Promise<
   Record<string, { status: "parado" | "rodando" | "erro"; pid?: number; exitCode?: number | null }>
 > {
   try {
-    return await hostFetchJson<
+    return await callPluginAction<
       Record<string, { status: "parado" | "rodando" | "erro"; pid?: number; exitCode?: number | null }>
-    >(`/api/plugins/max.paperclip-plugin/bridge/data`, {
-      method: "POST",
-      body: JSON.stringify({
-        key: "task-manager:status",
-        params: {},
-      }),
-    });
+    >(companyId, "task-manager:status", {});
   } catch (err) {
     console.warn("Erro ao buscar status de tasks do plugin:", err);
     return {};
@@ -223,19 +244,15 @@ export async function fetchTaskStatuses(): Promise<
  * Busca buffer de logs da task do projeto.
  */
 export async function fetchTaskLogs(
+  companyId: string,
   projectId: string,
   taskType: "dev" | "build",
 ): Promise<TaskLogsResult | null> {
   try {
-    return await hostFetchJson<TaskLogsResult>(
-      `/api/plugins/max.paperclip-plugin/bridge/data`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          key: "task-manager:logs",
-          params: { projectId, taskType },
-        }),
-      },
+    return await callPluginAction<TaskLogsResult>(
+      companyId,
+      "task-manager:logs",
+      { projectId, taskType },
     );
   } catch (err) {
     console.warn(`Erro ao buscar logs da task ${taskType} de ${projectId}:`, err);
@@ -247,17 +264,12 @@ export async function fetchTaskLogs(
  * Limpa o buffer de logs da task.
  */
 export async function clearTaskLogs(
+  companyId: string,
   projectId: string,
   taskType: "dev" | "build",
 ): Promise<boolean> {
   try {
-    await hostFetchJson(`/api/plugins/max.paperclip-plugin/bridge/action`, {
-      method: "POST",
-      body: JSON.stringify({
-        key: "task-manager:clear-logs",
-        params: { projectId, taskType },
-      }),
-    });
+    await callPluginAction(companyId, "task-manager:clear-logs", { projectId, taskType });
     return true;
   } catch {
     return false;
@@ -289,7 +301,8 @@ export async function deleteIssueCascade(issueId: string, childIds: string[]): P
     for (const childId of childIds) {
       const childSuccess = await deleteIssue(childId);
       if (!childSuccess) {
-        console.warn(`Aviso: falha ao remover subtarefa ${childId}, prosseguindo com as demais.`);
+        console.warn(`Falha ao remover subtarefa ${childId}; a tarefa principal foi preservada.`);
+        return false;
       }
     }
 

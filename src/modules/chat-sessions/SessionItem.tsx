@@ -178,7 +178,7 @@ export function SessionItem({
               </button>
             )}
 
-            {/* Botão de Remover Definitivamente */}
+            {/* Ocultação local — não remove mensagens do servidor */}
             <button
               type="button"
               onClick={(e) => {
@@ -186,7 +186,7 @@ export function SessionItem({
                 e.stopPropagation();
                 onDelete?.(session);
               }}
-              title="Remover definitivamente"
+              title="Ocultar neste navegador"
               className="p-1 hover:text-rose-500 text-muted-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
             >
               <Trash2 className="w-3 h-3" />

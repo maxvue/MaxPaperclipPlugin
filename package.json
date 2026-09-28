@@ -1,12 +1,17 @@
 {
   "name": "@max/paperclip-plugin",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Plugin consolidado MaxPaperclipPlugin: Ícones, Tradutor PT-BR, Aba de Tarefas, Auto-Save e Editor de Capacidades.",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./dist/worker.js",
+    "./manifest": "./dist/manifest.js",
+    "./ui": "./dist/ui/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "paperclipPlugin": {
     "manifest": "./dist/manifest.js",
     "worker": "./dist/worker.js",
@@ -22,16 +27,9 @@
   "overrides": {
     "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
   },
-  "pnpm": {
-    "overrides": {
-      "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
-    }
-  },
-  "dependencies": {
-    "@paperclipai/plugin-sdk": "file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz",
-    "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
-  },
   "devDependencies": {
+    "@paperclipai/plugin-sdk": "file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz",
+    "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz",
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",

@@ -7,16 +7,22 @@ import { TRANSLATIONS } from "../src/modules/translator/dictionary.js";
 describe("MaxPaperclipPlugin - Manifesto e Configurações", () => {
   it("deve conter metadados e identificadores corretos", () => {
     expect(PLUGIN_ID).toBe("max.paperclip-plugin");
-    expect(PLUGIN_VERSION).toBe("0.1.0");
+    expect(PLUGIN_VERSION).toBe("1.1.0");
     expect(manifest.id).toBe("max.paperclip-plugin");
-    expect(manifest.version).toBe("0.1.0");
+    expect(manifest.version).toBe("1.1.0");
     expect(manifest.displayName).toBe("MaxPaperclipPlugin");
   });
 
   it("deve declarar todas as capabilities necessárias para os módulos", () => {
     const requiredCaps = [
       "issues.read",
+      "issues.create",
+      "issues.update",
+      "issue.comments.read",
+      "issue.comments.create",
+      "issue.comments.create_human_attributed",
       "projects.read",
+      "project.workspaces.read",
       "agents.read",
       "plugin.state.read",
       "plugin.state.write",

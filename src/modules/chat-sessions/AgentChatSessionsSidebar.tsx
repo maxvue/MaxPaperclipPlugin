@@ -17,7 +17,7 @@ import {
   saveCustomTitle,
   archiveSession,
   unarchiveSession,
-  deleteSessionPermanently,
+  hideSessionLocally,
   activeChatSessionStore,
   type RawIssueComment,
 } from "./store.js";
@@ -298,7 +298,7 @@ export function AgentChatSessionsSidebar() {
 
     try {
       const deletedId = sessionToDelete.id;
-      deleteSessionPermanently(companyId, routeInfo.agentRef, deletedId);
+      hideSessionLocally(companyId, routeInfo.agentRef, deletedId);
 
       // Se a sessão excluída for a ativa, seleciona a mais recente restante
       if (deletedId === activeSessionId) {

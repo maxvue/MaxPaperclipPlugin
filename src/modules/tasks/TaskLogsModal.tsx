@@ -5,6 +5,7 @@ import type { StatusDeTask, TipoDeTask } from "./tasksJson.js";
 
 interface TaskLogsModalProps {
   open: boolean;
+  companyId: string;
   projectId: string;
   projectName: string;
   taskType: TipoDeTask;
@@ -13,6 +14,7 @@ interface TaskLogsModalProps {
 
 export function TaskLogsModal({
   open,
+  companyId,
   projectId,
   projectName,
   taskType,
@@ -31,7 +33,7 @@ export function TaskLogsModal({
       if (!projectId) return;
       if (!silent) setLoading(true);
       try {
-        const result = await fetchTaskLogs(projectId, taskType);
+        const result = await fetchTaskLogs(companyId, projectId, taskType);
         if (result) {
           setData(result);
         }
@@ -41,16 +43,24 @@ export function TaskLogsModal({
         if (!silent) setLoading(false);
       }
     },
-    [projectId, taskType]
+    [companyId, projectId, taskType]
   );
 
   useEffect(() => {
     if (!open) return;
-    loadLogs(false);
-    const interval = setInterval(() => {
-      loadLogs(true);
-    }, 2000);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async (silent: boolean) => {
+      await loadLogs(silent);
+      if (!cancelled) timer = setTimeout(() => void poll(true), 2000);
+    };
+
+    void poll(false);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [open, loadLogs]);
 
   useEffect(() => {
@@ -83,7 +93,7 @@ export function TaskLogsModal({
   };
 
   const handleClear = async () => {
-    await clearTaskLogs(projectId, taskType);
+    await clearTaskLogs(companyId, projectId, taskType);
     setData((prev) => (prev ? { ...prev, logs: [] } : null));
   };
 

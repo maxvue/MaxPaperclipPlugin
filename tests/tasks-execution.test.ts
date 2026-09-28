@@ -14,6 +14,8 @@ import {
   fetchTaskStatuses,
   fetchTaskLogs,
   clearTaskLogs,
+  fetchCompanyTasks,
+  deleteIssueCascade,
 } from "../src/modules/tasks/api.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -168,6 +170,7 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
 
       // Inicia task
       const startResult = await manager.executeTask({
+        companyId: "empresa-1",
         projectId: "proj-teste-1",
         projectName: "Projeto Teste",
         rootDir: tmpDir,
@@ -182,12 +185,13 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       // Aguarda um momento para que o processo emita stdout
       await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const logsResult = manager.getLogs("proj-teste-1", "dev");
+      const logsResult = manager.getLogs("empresa-1", "proj-teste-1", "dev");
       expect(logsResult.status).toBe("rodando");
       expect(logsResult.logs.some((l) => l.includes("Servidor dev iniciado"))).toBe(true);
 
       // Para a task
       const stopResult = await manager.executeTask({
+        companyId: "empresa-1",
         projectId: "proj-teste-1",
         rootDir: tmpDir,
         taskType: "dev",
@@ -197,7 +201,7 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       expect(stopResult.success).toBe(true);
       expect(stopResult.status).toBe("parado");
 
-      const status = manager.getProcessStatus("proj-teste-1", "dev");
+      const status = manager.getProcessStatus("empresa-1", "proj-teste-1", "dev");
       expect(status.status).toBe("parado");
     });
 
@@ -219,6 +223,7 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       );
 
       await manager.executeTask({
+        companyId: "empresa-1",
         projectId: "proj-build-limit",
         rootDir: tmpDir,
         taskType: "build",
@@ -228,7 +233,7 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       // Aguarda término da execução rápida
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const logs = manager.getLogs("proj-build-limit", "build");
+      const logs = manager.getLogs("empresa-1", "proj-build-limit", "build");
       expect(logs.logs.length).toBeLessThanOrEqual(200);
       expect(logs.logs[logs.logs.length - 1]).toContain("Processo finalizado");
     });
@@ -252,6 +257,7 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
 
       // Primeiro toggle: inicia
       const toggle1 = await manager.executeTask({
+        companyId: "empresa-1",
         projectId: "proj-toggle",
         rootDir: tmpDir,
         taskType: "dev",
@@ -261,12 +267,103 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
 
       // Segundo toggle: encerra
       const toggle2 = await manager.executeTask({
+        companyId: "empresa-1",
         projectId: "proj-toggle",
         rootDir: tmpDir,
         taskType: "dev",
         action: "toggle",
       });
       expect(toggle2.status).toBe("parado");
+    });
+
+    it("deve isolar processos e status por empresa mesmo com o mesmo projectId", async () => {
+      const vscodeDir = path.join(tmpDir, ".vscode");
+      fs.mkdirSync(vscodeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(vscodeDir, "tasks.json"),
+        JSON.stringify({
+          version: "2.0.0",
+          tasks: [{
+            label: "RUN DEV",
+            type: "shell",
+            command: "node -e 'setInterval(() => {}, 1000);'",
+          }],
+        }),
+      );
+
+      await manager.executeTask({
+        companyId: "empresa-a",
+        projectId: "projeto-compartilhado",
+        rootDir: tmpDir,
+        taskType: "dev",
+        action: "start",
+      });
+
+      expect(manager.getProcessStatus("empresa-a", "projeto-compartilhado", "dev").status).toBe("rodando");
+      expect(manager.getProcessStatus("empresa-b", "projeto-compartilhado", "dev").status).toBe("parado");
+      expect(manager.getAllStatuses("empresa-b")).toEqual({});
+    });
+
+    it("deve bloquear cwd e tasks.json que escapem da raiz autorizada", async () => {
+      const vscodeDir = path.join(tmpDir, ".vscode");
+      fs.mkdirSync(vscodeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(vscodeDir, "tasks.json"),
+        JSON.stringify({
+          version: "2.0.0",
+          tasks: [{
+            label: "RUN BUILD",
+            type: "shell",
+            command: "node -e 'process.exit(0)'",
+            options: { cwd: os.tmpdir() },
+          }],
+        }),
+      );
+
+      const result = await manager.executeTask({
+        companyId: "empresa-1",
+        projectId: "proj-traversal",
+        rootDir: tmpDir,
+        taskType: "build",
+        action: "start",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("erro");
+      expect(result.message).toContain("fora da raiz autorizada");
+    });
+
+    it("deve ocultar segredos e truncar linhas excessivas nos logs", async () => {
+      const vscodeDir = path.join(tmpDir, ".vscode");
+      fs.mkdirSync(vscodeDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(vscodeDir, "tasks.json"),
+        JSON.stringify({
+          version: "2.0.0",
+          tasks: [{
+            label: "RUN BUILD",
+            type: "process",
+            command: process.execPath,
+            args: ["-e", "console.log('API_TOKEN=super-secreto Bearer abc.def ' + 'x'.repeat(20000))"],
+          }],
+        }),
+      );
+
+      await manager.executeTask({
+        companyId: "empresa-1",
+        projectId: "proj-logs-seguros",
+        rootDir: tmpDir,
+        taskType: "build",
+        action: "start",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const texto = manager.getLogs("empresa-1", "proj-logs-seguros", "build").logs.join("\n");
+      expect(texto).not.toContain("super-secreto");
+      expect(texto).not.toContain("abc.def");
+      expect(texto).toContain("[REDACTED]");
+      expect(texto).toContain("[linha truncada]");
+      expect(Buffer.byteLength(texto, "utf-8")).toBeLessThanOrEqual(256 * 1024);
     });
   });
 
@@ -297,10 +394,11 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       });
 
       try {
-        const result = await executeProjectTask("proj-api-test", "dev", "toggle");
+        const result = await executeProjectTask("empresa-1", "proj-api-test", "dev", "toggle");
         expect(result.success).toBe(true);
         expect(result.status).toBe("rodando");
         expect(requestedUrl).toBe("/api/plugins/max.paperclip-plugin/bridge/action");
+        expect(requestedBody.companyId).toBe("empresa-1");
         expect(requestedBody.key).toBe("task-manager:execute");
         expect(requestedBody.params).toEqual({
           projectId: "proj-api-test",
@@ -343,10 +441,65 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       });
 
       try {
-        const logs = await fetchTaskLogs("proj-1", "dev");
+        const logs = await fetchTaskLogs("empresa-1", "proj-1", "dev");
         expect(logs?.status).toBe("rodando");
         expect(logs?.logs).toHaveLength(1);
         expect(logs?.pid).toBe(1234);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("deve paginar a listagem de tarefas até a última página", async () => {
+      const originalFetch = globalThis.fetch;
+      const urls: string[] = [];
+      const primeiraPagina = Array.from({ length: 250 }, (_, index) => ({
+        id: `issue-${index}`,
+        title: `Issue ${index}`,
+      }));
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        urls.push(url);
+        const issues = url.includes("offset=250")
+          ? [{ id: "issue-250", title: "Issue 250" }]
+          : primeiraPagina;
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/json" }),
+          json: async () => ({ issues }),
+        } as unknown as Response;
+      });
+
+      try {
+        const issues = await fetchCompanyTasks("empresa-1");
+        expect(issues).toHaveLength(251);
+        expect(urls).toEqual([
+          "/api/companies/empresa-1/issues?limit=250&offset=0",
+          "/api/companies/empresa-1/issues?limit=250&offset=250",
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("deve preservar a tarefa principal quando uma exclusão filha falhar", async () => {
+      const originalFetch = globalThis.fetch;
+      const urls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        urls.push(url);
+        const ok = !url.endsWith("/filha-2");
+        return {
+          ok,
+          status: ok ? 200 : 500,
+          headers: new Headers({ "content-type": "application/json" }),
+          json: async () => ok ? ({}) : ({ error: "falha simulada" }),
+        } as unknown as Response;
+      });
+
+      try {
+        await expect(deleteIssueCascade("pai", ["filha-1", "filha-2", "filha-3"])).resolves.toBe(false);
+        expect(urls).toEqual(["/api/issues/filha-1", "/api/issues/filha-2"]);
+        expect(urls).not.toContain("/api/issues/pai");
       } finally {
         globalThis.fetch = originalFetch;
       }

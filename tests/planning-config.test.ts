@@ -12,11 +12,11 @@ describe("configuração do planejamento assistido", () => {
     expect(isPlanningLeaderEligible({ id: leaderId, status: "paused" })).toBe(false);
   });
 
-  it("não aceita executor comum como líder de planejamento", () => {
+  it("aceita qualquer agente da empresa que esteja invocável", () => {
     expect(isPlanningLeaderEligible({
       id: "33333333-3333-4333-8333-333333333333",
       status: "idle",
-    })).toBe(false);
+    })).toBe(true);
   });
 
   it("torna obrigatórias as aprovações de escopo e técnica", () => {

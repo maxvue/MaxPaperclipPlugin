@@ -22,6 +22,57 @@ interface ParsedIcon {
 
 const inFlight = new Map<string, Promise<string | null>>();
 const originalSpanMap = new WeakMap<HTMLElement, string>();
+const SAFE_SVG_TAGS = new Set([
+  "svg", "g", "path", "circle", "rect", "line", "polyline", "polygon", "ellipse",
+  "defs", "clippath", "mask", "title",
+]);
+const SAFE_SVG_ATTRIBUTES = new Set([
+  "viewbox", "width", "height", "fill", "stroke", "stroke-width", "stroke-linecap",
+  "stroke-linejoin", "stroke-miterlimit", "fill-rule", "clip-rule", "d", "cx", "cy",
+  "r", "rx", "ry", "x", "y", "x1", "x2", "y1", "y2", "points", "transform",
+  "opacity", "fill-opacity", "stroke-opacity", "id", "clip-path", "mask",
+  "aria-hidden", "role", "focusable", "xmlns",
+]);
+
+function isSafeSvgAttribute(name: string, value: string): boolean {
+  const normalizedName = name.toLowerCase();
+  const normalizedValue = value.trim();
+  return Boolean(
+    SAFE_SVG_ATTRIBUTES.has(normalizedName) &&
+    !normalizedName.startsWith("on") &&
+    !/(?:javascript:|data:|https?:)/i.test(normalizedValue) &&
+    (!normalizedValue.includes("url(") || /^url\(#[A-Za-z0-9_-]+\)$/.test(normalizedValue))
+  );
+}
+
+export function sanitizeIconSvg(svg: string, size: string): string | null {
+  if (typeof DOMParser === "undefined" || typeof XMLSerializer === "undefined") return null;
+  const documentSvg = new DOMParser().parseFromString(svg, "image/svg+xml");
+  if (documentSvg.querySelector("parsererror")) return null;
+  const root = documentSvg.documentElement;
+  if (root.localName.toLowerCase() !== "svg") return null;
+  for (const element of [root, ...Array.from(root.querySelectorAll("*"))]) {
+    if (element !== root && !SAFE_SVG_TAGS.has(element.localName.toLowerCase())) {
+      element.remove();
+      continue;
+    }
+    if (!element.isConnected && element !== root) continue;
+    for (const attribute of Array.from(element.attributes)) {
+      if (!isSafeSvgAttribute(attribute.name, attribute.value)) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+  root.setAttribute("aria-hidden", "true");
+  root.setAttribute("focusable", "false");
+  root.setAttribute("width", size);
+  root.setAttribute("height", size);
+  root.setAttribute(
+    "style",
+    `display:inline-block;vertical-align:-0.15em;width:${size};height:${size}`,
+  );
+  return new XMLSerializer().serializeToString(root);
+}
 
 class IconifyEngine {
   private _enabled: boolean;
@@ -113,6 +164,11 @@ class IconifyEngine {
       }
     }
 
+    if (!/^[a-z0-9][a-z0-9:_/-]*$/i.test(rawName)) return null;
+    if (!/^(?:currentColor|none|#[0-9a-f]{3,8}|[a-z]{1,24}|rgba?\([0-9.,%\s]+\)|hsla?\([0-9.,%\s]+\))$/i.test(color)) {
+      color = "currentColor";
+    }
+
     // Resolução de prefixo e nome do Iconify
     let prefix = "lucide";
     let name = rawName;
@@ -148,7 +204,11 @@ class IconifyEngine {
    */
   public async fetchIconSvg(parsed: ParsedIcon): Promise<string | null> {
     const cached = iconifyCache.get(parsed.cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      const sanitized = sanitizeIconSvg(cached, parsed.size);
+      if (sanitized) return sanitized;
+      iconifyCache.delete(parsed.cacheKey);
+    }
 
     if (inFlight.has(parsed.cacheKey)) {
       return inFlight.get(parsed.cacheKey)!;
@@ -164,13 +224,11 @@ class IconifyEngine {
           return null;
         }
 
-        let svg = await res.text();
-        if (!svg || !svg.includes("<svg")) {
+        const rawSvg = await res.text();
+        const svg = sanitizeIconSvg(rawSvg, parsed.size);
+        if (!svg) {
           return null;
         }
-
-        // Garante que o SVG tenha estilos inline apropriados para alinhamento e dimensões
-        svg = svg.replace("<svg", `<svg style="display:inline-block; vertical-align:-0.15em; width:${parsed.size} !important; height:${parsed.size} !important;"`);
 
         iconifyCache.set(parsed.cacheKey, svg);
         return svg;
