@@ -32,6 +32,24 @@ export function parseChatRoute(
 }
 
 /**
+ * Garante que a regra CSS para ocultar itens de outras sessões esteja presente na página
+ */
+export function ensureVisibilityStyles(): void {
+  if (typeof document === "undefined") return;
+  const styleId = "max-chat-session-visibility-styles";
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      .max-session-hidden {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+}
+
+/**
  * Busca dados da empresa e da issue de chat com o agente
  */
 export async function fetchAgentChatContext(
@@ -82,15 +100,7 @@ export async function fetchAgentChatContext(
 export async function sendNewSessionCommand(issueId: string, companyId?: string): Promise<boolean> {
   if (typeof window === "undefined") return false;
 
-  // 1. Tenta enviar diretamente pelo textarea e botão do composer no DOM se presente
-  const textarea = document.querySelector<HTMLTextAreaElement>(
-    "#main-content textarea, textarea[data-slot='composer-textarea'], div[contenteditable='true']",
-  );
-  const sendButton = document.querySelector<HTMLButtonElement>(
-    "button[data-testid='task-chat-composer-send'], button[aria-label*='Send'], button[title*='Send']",
-  );
-
-  // 2. Também dispara via API oficial de comentários para garantir o reset no backend
+  // 1. Dispara via API oficial de comentários para garantir o reset de contexto no backend
   if (issueId) {
     try {
       const clientRequestId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `req_${Date.now()}`;
@@ -111,8 +121,25 @@ export async function sendNewSessionCommand(issueId: string, companyId?: string)
     }
   }
 
-  // Fallback via DOM
-  if (textarea) {
+  // 2. Fallback via DOM (MDXEditor / textarea)
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    "#main-content textarea, textarea[data-slot='composer-textarea']",
+  );
+  const contentEditable = document.querySelector<HTMLDivElement>(
+    "#main-content div[contenteditable='true'], .paperclip-mdxeditor-content",
+  );
+  const sendButton = document.querySelector<HTMLButtonElement>(
+    "button[data-testid='task-chat-composer-send'], button[aria-label*='Send'], button[title*='Send']",
+  );
+
+  if (contentEditable) {
+    contentEditable.focus();
+    document.execCommand("insertText", false, "/new");
+    if (sendButton && !sendButton.disabled) {
+      sendButton.click();
+      return true;
+    }
+  } else if (textarea) {
     textarea.value = "/new";
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     if (sendButton && !sendButton.disabled) {
@@ -143,6 +170,72 @@ export function findChatLayoutContainer(): HTMLElement | null {
 }
 
 /**
+ * Localiza o elemento container exato onde as mensagens e divisores do chat são montados
+ */
+export function findChatThreadElement(): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+
+  // 1. Container padrão do Paperclip TaskChatThreadView
+  const mobileThread = document.querySelector<HTMLElement>(".paperclip-mobile-thread");
+  if (mobileThread) return mobileThread;
+
+  // 2. Container geral do thread
+  const taskChatThread = document.querySelector<HTMLElement>("[data-testid='task-chat-thread']");
+  if (taskChatThread) {
+    const inner = taskChatThread.querySelector<HTMLElement>(".paperclip-mobile-thread");
+    if (inner) return inner;
+  }
+
+  // 3. Fallback: pai dos elementos ancorados
+  const anchor = document.querySelector<HTMLElement>("[data-thread-anchor]");
+  if (anchor && anchor.parentElement) {
+    return anchor.parentElement;
+  }
+
+  return null;
+}
+
+/**
+ * Verifica se um elemento filho do thread representa o início de uma nova sessão (/new)
+ */
+export function isSessionStartMarker(el: HTMLElement): boolean {
+  const marker = el.classList.contains("tc-enter-marker")
+    ? el
+    : el.querySelector<HTMLElement>(".tc-enter-marker");
+  if (!marker) return false;
+
+  const text = (marker.textContent || marker.innerText || "").toLowerCase();
+  // Marcadores de início de sessão possuem mensagens como "New session", "Nova sessão", "Earlier messages"
+  // e diferem de avisos de falha ("Falha na execução", "Run failed", "Interrupted")
+  const isStart =
+    text.includes("new session") ||
+    text.includes("nova sessão") ||
+    text.includes("earlier messages") ||
+    marker.getAttribute("data-variant") === "session_start";
+
+  const isFailure =
+    text.includes("falha") ||
+    text.includes("failed") ||
+    text.includes("interrupted") ||
+    text.includes("interrompid");
+
+  return isStart && !isFailure;
+}
+
+/**
+ * Rola a visualização do chat para o final da sessão atual
+ */
+export function scrollToActiveSession(): void {
+  if (typeof document === "undefined") return;
+  const viewport = document.querySelector<HTMLElement>(
+    ".task-chat-scroll-viewport, [data-testid='task-chat-thread'] .overflow-y-auto, #main-content",
+  );
+  if (viewport) {
+    viewport.scrollTop = viewport.scrollHeight;
+  }
+}
+
+/**
  * Aplica filtro de visibilidade no DOM do feed de chat para isolar a sessão ativa
  */
 export function applySessionVisibility(
@@ -151,39 +244,97 @@ export function applySessionVisibility(
 ): void {
   if (typeof document === "undefined") return;
 
-  const threadContainer = document.querySelector<HTMLElement>(
-    "#main-content [data-testid='task-chat-thread-view'], #main-content .tc-thread-viewport, #main-content",
-  );
+  ensureVisibilityStyles();
+
+  const threadContainer = findChatThreadElement();
   if (!threadContainer) return;
 
-  // Encontra todos os marcadores de nova sessão
-  const markers = Array.from(threadContainer.querySelectorAll<HTMLElement>(".tc-enter-marker"));
-  
-  // Se houver apenas 1 sessão (ou 0), todas as mensagens pertencem a ela
-  if (markers.length === 0) {
-    // Garante que tudo esteja visível
-    const hiddenElements = threadContainer.querySelectorAll<HTMLElement>(".max-session-hidden");
-    hiddenElements.forEach((el) => el.classList.remove("max-session-hidden"));
+  const children = Array.from(threadContainer.children) as HTMLElement[];
+  if (children.length === 0) return;
+
+  // Se houver apenas 1 sessão (ou 0), todas as mensagens devem ficar visíveis
+  if (totalSessionsCount <= 1) {
+    for (const child of children) {
+      child.style.display = "";
+      child.classList.remove("max-session-hidden");
+    }
     return;
   }
 
-  // Agrupa os nós filhos do thread por bloco de geração
-  // Bloco 0: antes do marker 0
-  // Bloco 1: do marker 0 até o marker 1
-  // ...
-  // Bloco K: do marker K-1 até o marker K
-  const children = Array.from(threadContainer.children) as HTMLElement[];
   let currentGen = 0;
 
   for (const child of children) {
-    if (child.classList.contains("tc-enter-marker")) {
+    // Mantém o cabeçalho do agente sempre visível
+    if (child.getAttribute("data-testid") === "task-chat-thread-header") {
+      child.style.display = "";
+      child.classList.remove("max-session-hidden");
+      continue;
+    }
+
+    const isStartMarker = isSessionStartMarker(child);
+    if (isStartMarker) {
       currentGen += 1;
     }
 
     if (currentGen === activeSessionGeneration) {
-      child.classList.remove("max-session-hidden");
+      // Se for o marcador de início desta sessão específica, oculta o divisor
+      // para que a tela inicie limpa como um chat autônomo
+      if (isStartMarker) {
+        child.style.display = "none";
+        child.classList.add("max-session-hidden");
+      } else {
+        child.style.display = "";
+        child.classList.remove("max-session-hidden");
+      }
     } else {
+      // Pertence a outra geração (sessão anterior ou posterior) -> Oculta
+      child.style.display = "none";
       child.classList.add("max-session-hidden");
     }
   }
+}
+
+/**
+ * Monitora mutações no feed de chat para manter o filtro de sessão ativo
+ * mesmo quando o Paperclip renderizar novas mensagens ou fizer atualizações reativas no DOM
+ */
+export function monitorThreadVisibility(
+  activeSessionGeneration: number,
+  totalSessionsCount: number,
+): () => void {
+  if (typeof document === "undefined") return () => {};
+
+  applySessionVisibility(activeSessionGeneration, totalSessionsCount);
+
+  const container = findChatThreadElement();
+  if (!container) {
+    const timer = setTimeout(() => {
+      applySessionVisibility(activeSessionGeneration, totalSessionsCount);
+    }, 300);
+    return () => clearTimeout(timer);
+  }
+
+  let rafId: number | null = null;
+  const reapply = () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
+      applySessionVisibility(activeSessionGeneration, totalSessionsCount);
+    });
+  };
+
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.type === "childList") {
+        reapply();
+        break;
+      }
+    }
+  });
+
+  observer.observe(container, { childList: true });
+
+  return () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    observer.disconnect();
+  };
 }

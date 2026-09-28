@@ -20,22 +20,23 @@
     "test": "vitest run"
   },
   "overrides": {
-    "@paperclipai/shared": "file:/home/johnattas/GitHub/paperclip/packages/shared"
+    "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
   },
   "pnpm": {
     "overrides": {
-      "@paperclipai/shared": "file:/home/johnattas/GitHub/paperclip/packages/shared"
+      "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
     }
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz",
-    "@paperclipai/shared": "file:/home/johnattas/GitHub/paperclip/packages/shared"
+    "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "esbuild": "^0.28.2",
+    "jsdom": "^30.1.1",
     "lucide-react": "^1.16.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

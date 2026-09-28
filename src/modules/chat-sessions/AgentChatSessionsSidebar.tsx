@@ -7,6 +7,8 @@ import {
   fetchAgentChatContext,
   sendNewSessionCommand,
   applySessionVisibility,
+  monitorThreadVisibility,
+  scrollToActiveSession,
   findChatLayoutContainer,
 } from "./engine.js";
 import {
@@ -70,6 +72,14 @@ export function AgentChatSessionsSidebar() {
       setModuleEnabled(s.chatSessions);
     });
   }, []);
+
+  // Limpa estados ao trocar de agente
+  useEffect(() => {
+    setActiveSessionId(null);
+    setRawComments([]);
+    setIssueId(null);
+    setSearchQuery("");
+  }, [routeInfo.agentRef, routeInfo.companyPrefix]);
 
   // Monitora alterações na URL para ativar na rota de chat
   useEffect(() => {
@@ -158,14 +168,23 @@ export function AgentChatSessionsSidebar() {
     }
   }, [sessions, activeSessionId]);
 
-  // Aplica o filtro de visibilidade no DOM do feed de chat
+  // Monitora e aplica o filtro de visibilidade no DOM do feed de chat
   useEffect(() => {
     if (!activeSessionId) return;
     const session = sessions.find((s) => s.id === activeSessionId);
     if (session) {
-      applySessionVisibility(session.generation, sessions.length);
+      return monitorThreadVisibility(session.generation, sessions.length);
     }
   }, [activeSessionId, sessions]);
+
+  // Manipulador de clique em uma sessão
+  const handleSelectSession = (session: ChatSession) => {
+    setActiveSessionId(session.id);
+    applySessionVisibility(session.generation, sessions.length);
+    requestAnimationFrame(() => {
+      scrollToActiveSession();
+    });
+  };
 
   // Sessões filtradas pela busca
   const filteredSessions = useMemo(() => {
@@ -174,14 +193,35 @@ export function AgentChatSessionsSidebar() {
     return [...list].sort((a, b) => b.generation - a.generation);
   }, [sessions, messagesBySession, searchQuery]);
 
+  // Verifica se o usuário está navegando em uma sessão de histórico anterior à mais recente
+  const isViewingHistory = useMemo(() => {
+    if (sessions.length <= 1) return false;
+    const current = sessions.find((s) => s.id === activeSessionId);
+    const latest = sessions[sessions.length - 1];
+    return Boolean(current && latest && current.generation < latest.generation);
+  }, [sessions, activeSessionId]);
+
   // Ação de criar Nova Sessão
   const handleNewSession = async () => {
-    if (!issueId) return;
+    if (!issueId) {
+      const composer = document.querySelector<HTMLElement>(
+        "[data-testid='task-chat-composer-input'] div[contenteditable='true'], #main-content textarea",
+      );
+      if (composer) composer.focus();
+      return;
+    }
     setLoading(true);
     try {
       const ok = await sendNewSessionCommand(issueId, companyId || undefined);
       if (ok) {
+        await new Promise((r) => setTimeout(r, 400));
         await refreshChatData(true);
+        setTimeout(() => {
+          const composer = document.querySelector<HTMLElement>(
+            "[data-testid='task-chat-composer-input'] div[contenteditable='true'], #main-content textarea",
+          );
+          if (composer) composer.focus();
+        }, 100);
       }
     } finally {
       setLoading(false);
@@ -292,6 +332,25 @@ export function AgentChatSessionsSidebar() {
         </button>
       </div>
 
+      {/* Indicador de Histórico quando visualizando sessão anterior */}
+      {isViewingHistory && (
+        <div className="px-2.5 pb-2 shrink-0">
+          <div className="flex items-center justify-between gap-1 px-2.5 py-1.5 rounded-md bg-muted/60 border border-border/80 text-[11px] text-muted-foreground">
+            <span className="truncate">Visualizando histórico</span>
+            <button
+              type="button"
+              onClick={() => {
+                const latest = sessions[sessions.length - 1];
+                if (latest) handleSelectSession(latest);
+              }}
+              className="text-primary hover:underline font-medium shrink-0 cursor-pointer"
+            >
+              Ir para atual
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input de Pesquisa dentro do Chat */}
       <div className="px-2.5 pb-2 shrink-0">
         <div className="relative flex items-center">
@@ -329,7 +388,7 @@ export function AgentChatSessionsSidebar() {
               key={session.id}
               session={session}
               isActive={session.id === activeSessionId}
-              onSelect={(s) => setActiveSessionId(s.id)}
+              onSelect={handleSelectSession}
               onRename={handleRename}
             />
           ))

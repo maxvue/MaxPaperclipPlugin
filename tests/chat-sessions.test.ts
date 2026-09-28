@@ -1,5 +1,10 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
-import { parseChatRoute } from "../src/modules/chat-sessions/engine.js";
+import {
+  parseChatRoute,
+  isSessionStartMarker,
+  applySessionVisibility,
+} from "../src/modules/chat-sessions/engine.js";
 import {
   generateSessionTitle,
   groupCommentsIntoSessions,
@@ -215,6 +220,69 @@ describe("MaxPaperclipPlugin - Módulo de Sessões de Chat (Chat Sessions)", () 
     it("deve retornar vazio quando o termo não existir em nenhuma sessão", () => {
       const filtered = filterSessions(mockSessions, mockMessagesMap, "termo-inexistente-xyz");
       expect(filtered).toHaveLength(0);
+    });
+  });
+
+  describe("Visibilidade e Isolamento de Sessões no DOM", () => {
+    beforeEach(() => {
+      document.body.innerHTML = "";
+    });
+
+    it("deve identificar marcadores legítimos de início de sessão (/new) e ignorar avisos de falha", () => {
+      // Marcador válido de nova sessão
+      const divMarker = document.createElement("div");
+      divMarker.innerHTML = '<div class="tc-enter-marker">New session · Earlier messages and files are still available.</div>';
+      expect(isSessionStartMarker(divMarker)).toBe(true);
+
+      // Marcador de falha (não é nova sessão)
+      const divFailure = document.createElement("div");
+      divFailure.innerHTML = '<div class="tc-enter-marker">Falha na execução · The run failed.</div>';
+      expect(isSessionStartMarker(divFailure)).toBe(false);
+
+      // Elemento comum de mensagem
+      const divMsg = document.createElement("div");
+      divMsg.innerHTML = '<div>Olá agente</div>';
+      expect(isSessionStartMarker(divMsg)).toBe(false);
+    });
+
+    it("deve alternar a visibilidade das mensagens no DOM ao mudar a sessão ativa", () => {
+      // Monta DOM simulado do Paperclip TaskChatThreadView
+      const container = document.createElement("div");
+      container.className = "paperclip-mobile-thread";
+
+      // Header
+      const header = document.createElement("div");
+      header.setAttribute("data-testid", "task-chat-thread-header");
+      container.appendChild(header);
+
+      // Mensagem da Sessão 0
+      const msg0 = document.createElement("div");
+      msg0.setAttribute("data-thread-anchor", "msg-0");
+      container.appendChild(msg0);
+
+      // Marcador /new iniciando Sessão 1
+      const marker1 = document.createElement("div");
+      marker1.innerHTML = '<div class="tc-enter-marker">New session · Earlier messages...</div>';
+      container.appendChild(marker1);
+
+      // Mensagem da Sessão 1
+      const msg1 = document.createElement("div");
+      msg1.setAttribute("data-thread-anchor", "msg-1");
+      container.appendChild(msg1);
+
+      document.body.appendChild(container);
+
+      // Seleciona Sessão 0
+      applySessionVisibility(0, 2);
+      expect(msg0.style.display).toBe("");
+      expect(marker1.style.display).toBe("none");
+      expect(msg1.style.display).toBe("none");
+
+      // Seleciona Sessão 1
+      applySessionVisibility(1, 2);
+      expect(msg0.style.display).toBe("none");
+      expect(marker1.style.display).toBe("none"); // divisor oculto para iniciar tela limpa
+      expect(msg1.style.display).toBe("");
     });
   });
 });
