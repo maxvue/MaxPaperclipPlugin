@@ -5,11 +5,14 @@ import {
   PLANNING_LEADER_IDS,
   type ProjectPlanningConfig,
 } from "./planning-config.js";
+import { taskProcessManager } from "./modules/tasks/processManager.js";
+import type { TipoDeTask } from "./modules/tasks/tasksJson.js";
 
 export const PLUGIN_ID = "max.paperclip-plugin";
 
 const PLANNING_NAMESPACE = "planning";
 const PLANNING_CONFIG_KEY = "config";
+
 function requiredString(params: Record<string, unknown>, key: string): string {
   const value = params[key];
   if (typeof value !== "string" || !value.trim()) {
@@ -27,8 +30,31 @@ function planningStateKey(projectId: string) {
   };
 }
 
+export function extrairRaizDoProjeto(project: unknown): string | null {
+  if (!project || typeof project !== "object") return null;
+  const p = project as Record<string, unknown>;
+  const codebase = p.codebase as Record<string, unknown> | undefined;
+  const primaryWorkspace = p.primaryWorkspace as Record<string, unknown> | undefined;
+  const workspaces = Array.isArray(p.workspaces) ? p.workspaces : [];
+
+  const candidate =
+    (typeof codebase?.effectiveLocalFolder === "string" && codebase.effectiveLocalFolder) ||
+    (typeof codebase?.localFolder === "string" && codebase.localFolder) ||
+    (typeof primaryWorkspace?.cwd === "string" && primaryWorkspace.cwd) ||
+    (workspaces.length > 0 &&
+      typeof (workspaces[0] as Record<string, unknown>)?.cwd === "string" &&
+      ((workspaces[0] as Record<string, unknown>).cwd as string)) ||
+    null;
+
+  if (!candidate || typeof candidate !== "string") return null;
+  return candidate.replace(/[/\\]+$/, "");
+}
+
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
+    // -------------------------------------------------------------
+    // Planning Data & Actions
+    // -------------------------------------------------------------
     ctx.data.register("planning-bootstrap", async (params) => {
       const rawCompanyId = params.companyId;
       if (typeof rawCompanyId !== "string" || !rawCompanyId.trim()) {
@@ -48,11 +74,13 @@ const plugin = definePlugin({
         .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
 
       const configurations: Record<string, ProjectPlanningConfig | null> = {};
-      await Promise.all(projects.map(async (project) => {
-        configurations[project.id] = await ctx.state.get(
-          planningStateKey(project.id),
-        ) as ProjectPlanningConfig | null;
-      }));
+      await Promise.all(
+        projects.map(async (project) => {
+          configurations[project.id] = (await ctx.state.get(
+            planningStateKey(project.id)
+          )) as ProjectPlanningConfig | null;
+        })
+      );
 
       return { leaders, configurations };
     });
@@ -78,13 +106,94 @@ const plugin = definePlugin({
       return config;
     });
 
-    ctx.logger.info("MaxPaperclipPlugin unificado inicializado com sucesso.");
+    // -------------------------------------------------------------
+    // Task Manager Actions & Data (Execução de tasks .vscode estilo MaxCode)
+    // -------------------------------------------------------------
+    ctx.actions.register("task-manager:execute", async (params, actionContext) => {
+      const companyId = actionContext.companyId;
+      const projectId = requiredString(params, "projectId");
+      const rawTaskType = requiredString(params, "taskType");
+      if (rawTaskType !== "dev" && rawTaskType !== "build") {
+        throw new Error("taskType inválido (deve ser 'dev' ou 'build')");
+      }
+      const taskType = rawTaskType as TipoDeTask;
+      const action =
+        typeof params.action === "string"
+          ? (params.action as "start" | "stop" | "toggle")
+          : "toggle";
+
+      let rootDir = typeof params.rootDir === "string" ? params.rootDir.trim() : "";
+      let projectName: string | undefined;
+
+      if (!rootDir && companyId) {
+        const project = await ctx.projects.get(projectId, companyId);
+        if (project) {
+          projectName = (project as unknown as { name?: string }).name;
+          const extracted = extrairRaizDoProjeto(project);
+          if (extracted) rootDir = extracted;
+        }
+      }
+
+      if (!rootDir && companyId) {
+        try {
+          const allProjects = await ctx.projects.list({ companyId, limit: 500 });
+          const p = allProjects.find((x) => x.id === projectId);
+          if (p) {
+            projectName = (p as unknown as { name?: string }).name;
+            const extracted = extrairRaizDoProjeto(p);
+            if (extracted) rootDir = extracted;
+          }
+        } catch {
+          // ignora
+        }
+      }
+
+      if (!rootDir) {
+        throw new Error(
+          `Não foi possível determinar o diretório raiz local do projeto ${projectId}`
+        );
+      }
+
+      return await taskProcessManager.executeTask({
+        projectId,
+        projectName,
+        rootDir,
+        taskType,
+        action,
+      });
+    });
+
+    const handleStatuses = async () => {
+      return taskProcessManager.getAllStatuses();
+    };
+    ctx.actions.register("task-manager:status", handleStatuses);
+    ctx.data.register("task-manager:status", handleStatuses);
+
+    const handleLogs = async (params: Record<string, unknown>) => {
+      const projectId = requiredString(params, "projectId");
+      const rawTaskType = requiredString(params, "taskType");
+      if (rawTaskType !== "dev" && rawTaskType !== "build") {
+        throw new Error("taskType inválido (deve ser 'dev' ou 'build')");
+      }
+      return taskProcessManager.getLogs(projectId, rawTaskType as TipoDeTask);
+    };
+    ctx.actions.register("task-manager:logs", handleLogs);
+    ctx.data.register("task-manager:logs", handleLogs);
+
+    ctx.actions.register("task-manager:clear-logs", async (params) => {
+      const projectId = requiredString(params, "projectId");
+      const rawTaskType = requiredString(params, "taskType");
+      taskProcessManager.clearLogs(projectId, rawTaskType as TipoDeTask);
+      return { success: true };
+    });
+
+    ctx.logger.info("MaxPaperclipPlugin unificado inicializado com sucesso (Task Manager ativo).");
   },
 
   async onHealth() {
     return {
       status: "ok",
-      message: "MaxPaperclipPlugin operacional (AutoSave, Tradutor, Iconify, Tarefas, Capacidades)",
+      message: "MaxPaperclipPlugin operacional (AutoSave, Tradutor, Iconify, Tarefas, Capacidades, TaskManager)",
     };
   },
 });

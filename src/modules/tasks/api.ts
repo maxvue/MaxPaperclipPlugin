@@ -151,22 +151,115 @@ export async function unarchiveIssue(issueId: string): Promise<boolean> {
   }
 }
 
+export interface TaskExecutionResult {
+  success: boolean;
+  status: "parado" | "rodando" | "erro";
+  pid?: number;
+  message?: string;
+}
+
+export interface TaskLogsResult {
+  projectId: string;
+  taskType: "dev" | "build";
+  status: "parado" | "rodando" | "erro";
+  logs: string[];
+  pid?: number;
+  startedAt?: string;
+}
+
 /**
- * Aciona execução de task do projeto (dev ou build).
+ * Aciona execução de task do projeto (dev ou build) através do Task Manager do plugin.
  */
 export async function executeProjectTask(
   projectId: string,
   taskType: "dev" | "build",
+  action: "start" | "stop" | "toggle" = "toggle",
+): Promise<TaskExecutionResult> {
+  try {
+    const res = await hostFetchJson<TaskExecutionResult>(
+      `/api/plugins/max.paperclip-plugin/bridge/action`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          key: "task-manager:execute",
+          params: { projectId, taskType, action },
+        }),
+      },
+    );
+    return res;
+  } catch (err) {
+    console.warn(`Erro ao acionar task ${taskType} do projeto ${projectId}:`, err);
+    return {
+      success: false,
+      status: "erro",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Busca status de todas as tasks ativas gerenciadas pelo plugin.
+ */
+export async function fetchTaskStatuses(): Promise<
+  Record<string, { status: "parado" | "rodando" | "erro"; pid?: number; exitCode?: number | null }>
+> {
+  try {
+    return await hostFetchJson<
+      Record<string, { status: "parado" | "rodando" | "erro"; pid?: number; exitCode?: number | null }>
+    >(`/api/plugins/max.paperclip-plugin/bridge/data`, {
+      method: "POST",
+      body: JSON.stringify({
+        key: "task-manager:status",
+        params: {},
+      }),
+    });
+  } catch (err) {
+    console.warn("Erro ao buscar status de tasks do plugin:", err);
+    return {};
+  }
+}
+
+/**
+ * Busca buffer de logs da task do projeto.
+ */
+export async function fetchTaskLogs(
+  projectId: string,
+  taskType: "dev" | "build",
+): Promise<TaskLogsResult | null> {
+  try {
+    return await hostFetchJson<TaskLogsResult>(
+      `/api/plugins/max.paperclip-plugin/bridge/data`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          key: "task-manager:logs",
+          params: { projectId, taskType },
+        }),
+      },
+    );
+  } catch (err) {
+    console.warn(`Erro ao buscar logs da task ${taskType} de ${projectId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Limpa o buffer de logs da task.
+ */
+export async function clearTaskLogs(
+  projectId: string,
+  taskType: "dev" | "build",
 ): Promise<boolean> {
   try {
-    // Tenta disparar comando no workspace de runtime do projeto se disponível
-    await hostFetchJson(`/api/projects/${projectId}/tasks/${taskType}/run`, {
+    await hostFetchJson(`/api/plugins/max.paperclip-plugin/bridge/action`, {
       method: "POST",
-      body: JSON.stringify({ task: taskType }),
+      body: JSON.stringify({
+        key: "task-manager:clear-logs",
+        params: { projectId, taskType },
+      }),
     });
     return true;
   } catch {
-    // Se o backend não tiver o endpoint mapeado, o frontend mantém o controle de estado e feedback visual
     return false;
   }
 }

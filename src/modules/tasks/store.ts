@@ -8,7 +8,7 @@ const STORAGE_KEY_HIDDEN_PROJECTS = "paperclip:plugin-task-sidebar:hiddenProject
 const STORAGE_KEY_PROJECTS_ORDER = "paperclip:plugin-task-sidebar:projectsOrder";
 
 export type SidebarSide = "left" | "right";
-export type TaskRunStatus = "parado" | "rodando";
+export type TaskRunStatus = "parado" | "rodando" | "erro";
 
 export interface SidebarState {
   isOpen: boolean;
@@ -382,6 +382,40 @@ export const sidebarStore = {
       },
     };
     notify();
+  },
+
+  setAllTaskStatuses(
+    statuses: Record<string, { status: TaskRunStatus; pid?: number; exitCode?: number | null }>
+  ) {
+    const nextDev = { ...state.runDevStates };
+    const nextBuild = { ...state.runBuildStates };
+    let changed = false;
+
+    for (const [key, val] of Object.entries(statuses)) {
+      const [projId, taskType] = key.split(":");
+      if (!projId || !taskType) continue;
+
+      if (taskType === "dev") {
+        if (nextDev[projId] !== val.status) {
+          nextDev[projId] = val.status;
+          changed = true;
+        }
+      } else if (taskType === "build") {
+        if (nextBuild[projId] !== val.status) {
+          nextBuild[projId] = val.status;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      state = {
+        ...state,
+        runDevStates: nextDev,
+        runBuildStates: nextBuild,
+      };
+      notify();
+    }
   },
 
   setExibindoArquivados(exibindo: boolean) {
