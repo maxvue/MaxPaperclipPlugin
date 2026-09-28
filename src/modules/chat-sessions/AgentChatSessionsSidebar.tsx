@@ -15,6 +15,7 @@ import {
   groupCommentsIntoSessions,
   filterSessions,
   saveCustomTitle,
+  activeChatSessionStore,
   type RawIssueComment,
 } from "./store.js";
 import { SessionItem } from "./SessionItem.js";
@@ -80,6 +81,11 @@ export function AgentChatSessionsSidebar() {
     setIssueId(null);
     setSearchQuery("");
   }, [routeInfo.agentRef, routeInfo.companyPrefix]);
+
+  // Sincroniza sessão ativa no store global compartilhado
+  useEffect(() => {
+    activeChatSessionStore.set(activeSessionId);
+  }, [activeSessionId]);
 
   // Monitora alterações na URL para ativar na rota de chat
   useEffect(() => {

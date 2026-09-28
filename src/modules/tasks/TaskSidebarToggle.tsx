@@ -9,6 +9,7 @@ import {
 import { sidebarStore, useSidebarStore } from "./store.js";
 import { TaskSidebarRightColumn } from "./TaskSidebarRightColumn.js";
 import { AgentChatSessionsSidebar } from "../chat-sessions/AgentChatSessionsSidebar.js";
+import { AgentChatContextSidebar } from "../chat-context/AgentChatContextSidebar.js";
 import { getSettings, subscribeSettings } from "../../config/settings.js";
 
 interface TaskSidebarToggleProps {
@@ -164,6 +165,9 @@ export function TaskSidebarToggle({ context }: TaskSidebarToggleProps) {
 
       {/* Renderiza o painel de sessões de chat à esquerda em rotas de chat */}
       {isPortalOwner ? <AgentChatSessionsSidebar /> : null}
+
+      {/* Renderiza o painel de contexto e métricas da conversa à direita em rotas de chat */}
+      {isPortalOwner ? <AgentChatContextSidebar /> : null}
     </>
   );
 }

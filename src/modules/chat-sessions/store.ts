@@ -166,3 +166,26 @@ export function filterSessions(
     return messages.some((m) => m.text.toLowerCase().includes(q));
   });
 }
+
+let currentActiveSessionId: string | null = null;
+const activeSessionListeners = new Set<(id: string | null) => void>();
+
+export const activeChatSessionStore = {
+  get(): string | null {
+    return currentActiveSessionId;
+  },
+  set(id: string | null) {
+    if (currentActiveSessionId === id) return;
+    currentActiveSessionId = id;
+    for (const listener of activeSessionListeners) {
+      listener(id);
+    }
+  },
+  subscribe(listener: (id: string | null) => void): () => void {
+    activeSessionListeners.add(listener);
+    return () => {
+      activeSessionListeners.delete(listener);
+    };
+  },
+};
+
