@@ -1,5 +1,5 @@
 import type { RelatedTask, ArtifactItem } from "./types.js";
-import { hostFetchJson } from "../tasks/api.js";
+import { fetchCompanyTasks, hostFetchJson } from "../tasks/api.js";
 import type { IssueSummary } from "../tasks/types.js";
 
 interface IssueDetailResponse {
@@ -33,10 +33,7 @@ export async function fetchRelatedTasks(
   mentionedIdentifiers: string[] = [],
 ): Promise<RelatedTask[]> {
   try {
-    const raw = await hostFetchJson<IssueSummary[] | { issues: IssueSummary[] }>(
-      `/api/companies/${companyId}/issues?limit=250`,
-    );
-    const list: IssueSummary[] = Array.isArray(raw) ? raw : (raw?.issues ?? []);
+    const list = await fetchCompanyTasks(companyId, true);
     const mentionedSet = new Set(mentionedIdentifiers.map((id) => id.toUpperCase()));
 
     const relatedMap = new Map<string, RelatedTask>();
@@ -114,19 +111,12 @@ export async function createNewLinkedTask(
   try {
     let resolvedProjectId = projectId;
 
-    // Se projectId não foi fornecido, tenta descobrir via issue atual ou lista de projetos da empresa
+    // Se projectId não foi fornecido, herda somente o projeto confirmado da issue pai.
+    // Nunca escolhe um projeto arbitrário da empresa para uma relação válida, porém incorreta.
     if (!resolvedProjectId) {
       const issueRes = await hostFetchJson<IssueDetailResponse>(`/api/issues/${parentIssueId}`).catch(() => null);
       if (issueRes?.projectId) {
         resolvedProjectId = issueRes.projectId;
-      } else {
-        const projects = await hostFetchJson<Array<{ id: string; status?: string }>>(
-          `/api/companies/${companyId}/projects`,
-        ).catch(() => []);
-        const activeProj = Array.isArray(projects) ? projects.find((p) => p.status !== "archived") || projects[0] : null;
-        if (activeProj?.id) {
-          resolvedProjectId = activeProj.id;
-        }
       }
     }
 
@@ -134,27 +124,16 @@ export async function createNewLinkedTask(
       title,
       status: "todo",
       priority: "medium",
-      createdFromIssueId: parentIssueId,
+      parentId: parentIssueId,
     };
     if (resolvedProjectId) {
       payload.projectId = resolvedProjectId;
     }
 
-    // Cria a tarefa vinculada à conversa via createdFromIssueId
-    try {
-      const created = await hostFetchJson<IssueSummary>(`/api/companies/${companyId}/issues`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      return created;
-    } catch {
-      // Se a API exigir parentId, faz fallback tentando com parentId
-      const createdWithParent = await hostFetchJson<IssueSummary>(`/api/companies/${companyId}/issues`, {
-        method: "POST",
-        body: JSON.stringify({ ...payload, parentId: parentIssueId }),
-      });
-      return createdWithParent;
-    }
+    return await hostFetchJson<IssueSummary>(`/api/companies/${companyId}/issues`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   } catch (err) {
     console.error("[MaxPaperclipPlugin] Erro ao criar tarefa vinculada:", err);
     return null;

@@ -239,8 +239,8 @@ export function scrollToActiveSession(): void {
  * Aplica filtro de visibilidade no DOM do feed de chat para isolar a sessão ativa
  */
 export function applySessionVisibility(
-  activeSessionGeneration: number,
-  totalSessionsCount: number,
+  activeSessionIndex: number,
+  _totalSessionsCount: number,
 ): void {
   if (typeof document === "undefined") return;
 
@@ -251,15 +251,6 @@ export function applySessionVisibility(
 
   const children = Array.from(threadContainer.children) as HTMLElement[];
   if (children.length === 0) return;
-
-  // Se houver apenas 1 sessão (ou 0), todas as mensagens devem ficar visíveis
-  if (totalSessionsCount <= 1) {
-    for (const child of children) {
-      child.style.display = "";
-      child.classList.remove("max-session-hidden");
-    }
-    return;
-  }
 
   let currentGen = 0;
 
@@ -276,7 +267,7 @@ export function applySessionVisibility(
       currentGen += 1;
     }
 
-    if (currentGen === activeSessionGeneration) {
+    if (currentGen === activeSessionIndex) {
       // Se for o marcador de início desta sessão específica, oculta o divisor
       // para que a tela inicie limpa como um chat autônomo
       if (isStartMarker) {
@@ -294,22 +285,28 @@ export function applySessionVisibility(
   }
 }
 
+export function getSessionDisplayIndex(activeGeneration: number, generations: number[]): number {
+  const ordered = [...new Set(generations)].sort((left, right) => left - right);
+  const index = ordered.indexOf(activeGeneration);
+  return index >= 0 ? index : 0;
+}
+
 /**
  * Monitora mutações no feed de chat para manter o filtro de sessão ativo
  * mesmo quando o Paperclip renderizar novas mensagens ou fizer atualizações reativas no DOM
  */
 export function monitorThreadVisibility(
-  activeSessionGeneration: number,
+  activeSessionIndex: number,
   totalSessionsCount: number,
 ): () => void {
   if (typeof document === "undefined") return () => {};
 
-  applySessionVisibility(activeSessionGeneration, totalSessionsCount);
+  applySessionVisibility(activeSessionIndex, totalSessionsCount);
 
   const container = findChatThreadElement();
   if (!container) {
     const timer = setTimeout(() => {
-      applySessionVisibility(activeSessionGeneration, totalSessionsCount);
+      applySessionVisibility(activeSessionIndex, totalSessionsCount);
     }, 300);
     return () => clearTimeout(timer);
   }
@@ -318,7 +315,7 @@ export function monitorThreadVisibility(
   const reapply = () => {
     if (rafId) cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(() => {
-      applySessionVisibility(activeSessionGeneration, totalSessionsCount);
+      applySessionVisibility(activeSessionIndex, totalSessionsCount);
     });
   };
 

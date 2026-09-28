@@ -322,16 +322,11 @@ class IconifyEngine {
         span.style.minHeight = parsed.size;
         originalSpanMap.set(span, match.full);
 
-        const cached = iconifyCache.get(parsed.cacheKey);
-        if (cached) {
-          span.innerHTML = cached;
-        } else {
-          void this.fetchIconSvg(parsed).then((svg) => {
-            if (svg && span.isConnected) {
-              span.innerHTML = svg;
-            }
-          });
-        }
+        void this.fetchIconSvg(parsed).then((svg) => {
+          if (svg && span.isConnected) {
+            span.innerHTML = svg;
+          }
+        });
         frag.appendChild(span);
       } else {
         frag.appendChild(document.createTextNode(match.full));
@@ -380,16 +375,11 @@ class IconifyEngine {
           span.style.minHeight = parsed.size;
           originalSpanMap.set(span, el.outerHTML);
 
-          const cached = iconifyCache.get(parsed.cacheKey);
-          if (cached) {
-            span.innerHTML = cached;
-          } else {
-            void this.fetchIconSvg(parsed).then((svg) => {
-              if (svg && span.isConnected) {
-                span.innerHTML = svg;
-              }
-            });
-          }
+          void this.fetchIconSvg(parsed).then((svg) => {
+            if (svg && span.isConnected) {
+              span.innerHTML = svg;
+            }
+          });
 
           const parent = el.parentElement;
           if (parent) {

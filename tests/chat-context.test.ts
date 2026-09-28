@@ -8,8 +8,58 @@ import {
 } from "../src/modules/chat-context/parser.js";
 import type { RawIssueComment } from "../src/modules/chat-sessions/store.js";
 import type { ChatSession } from "../src/modules/chat-sessions/types.js";
+import { createNewLinkedTask } from "../src/modules/chat-context/api.js";
 
 describe("MaxPaperclipPlugin - Módulo de Contexto e Execução (Chat Context)", () => {
+  it("deve criar tarefas vinculadas usando parentId suportado pelo host", async () => {
+    const originalFetch = globalThis.fetch;
+    let payload: Record<string, unknown> | null = null;
+    globalThis.fetch = async (_url, init) => {
+      payload = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(JSON.stringify({ id: "filha-1", ...payload }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    try {
+      const created = await createNewLinkedTask("empresa-1", "pai-1", "Nova tarefa", "proj-1");
+      expect(created?.id).toBe("filha-1");
+      expect(payload).toMatchObject({ parentId: "pai-1", projectId: "proj-1" });
+      expect(payload).not.toHaveProperty("createdFromIssueId");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+  it("não deve escolher arbitrariamente um projeto quando a tarefa pai não possui projeto", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; payload?: Record<string, unknown> }> = [];
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({
+        url,
+        payload: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      if (url === "/api/issues/pai-sem-projeto") {
+        return new Response(JSON.stringify({ id: "pai-sem-projeto" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ id: "filha-2" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    try {
+      await createNewLinkedTask("empresa-1", "pai-sem-projeto", "Nova tarefa");
+      const createRequest = requests.find((request) => request.payload);
+      expect(createRequest?.payload).toMatchObject({ parentId: "pai-sem-projeto" });
+      expect(createRequest?.payload).not.toHaveProperty("projectId");
+      expect(requests.some((request) => request.url.includes("/projects"))).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
   describe("Extração de Identificadores de Tarefas Mencionadas", () => {
     it("deve extrair referências a tarefas em diferentes formatos no texto", () => {
       const text = `

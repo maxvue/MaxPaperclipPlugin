@@ -4,6 +4,7 @@ import {
   parseChatRoute,
   isSessionStartMarker,
   applySessionVisibility,
+  getSessionDisplayIndex,
 } from "../src/modules/chat-sessions/engine.js";
 import {
   generateSessionTitle,
@@ -324,6 +325,40 @@ describe("MaxPaperclipPlugin - Módulo de Sessões de Chat (Chat Sessions)", () 
       expect(msg0.style.display).toBe("none");
       expect(marker1.style.display).toBe("none"); // divisor oculto para iniciar tela limpa
       expect(msg1.style.display).toBe("");
+    });
+
+    it("deve manter mensagens antigas ocultas quando resta apenas uma sessão visível", () => {
+      const container = document.createElement("div");
+      container.className = "paperclip-mobile-thread";
+      const antiga = document.createElement("div");
+      antiga.textContent = "Mensagem antiga";
+      const marcador = document.createElement("div");
+      marcador.innerHTML = '<div class="tc-enter-marker">New session</div>';
+      const atual = document.createElement("div");
+      atual.textContent = "Mensagem atual";
+      container.append(antiga, marcador, atual);
+      document.body.appendChild(container);
+
+      applySessionVisibility(1, 1);
+
+      expect(antiga.style.display).toBe("none");
+      expect(marcador.style.display).toBe("none");
+      expect(atual.style.display).toBe("");
+    });
+
+    it("deve converter geração canônica não-zero em índice visual do DOM", () => {
+      const container = document.createElement("div");
+      container.className = "paperclip-mobile-thread";
+      const mensagem = document.createElement("div");
+      mensagem.textContent = "Sessão canônica 7";
+      container.appendChild(mensagem);
+      document.body.appendChild(container);
+
+      const displayIndex = getSessionDisplayIndex(7, [7]);
+      applySessionVisibility(displayIndex, 1);
+
+      expect(displayIndex).toBe(0);
+      expect(mensagem.style.display).toBe("");
     });
   });
 

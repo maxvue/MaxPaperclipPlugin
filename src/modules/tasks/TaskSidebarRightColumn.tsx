@@ -77,6 +77,8 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
 
   const companyId = context?.companyId;
   const companyPrefix = context?.companyPrefix;
+  const activeCompanyRef = useRef(companyId);
+  activeCompanyRef.current = companyId;
 
   const [width, setWidth] = useState(readStoredWidth);
   const [isDragging, setIsDragging] = useState(false);
@@ -129,6 +131,8 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
         fetchTaskStatuses(companyId),
       ]);
 
+      if (activeCompanyRef.current !== companyId) return;
+
       setTasks(fetchedTasks);
       setProjects(fetchedProjects);
       setLiveRuns(fetchedLiveRuns);
@@ -138,7 +142,7 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
     } catch (err) {
       console.warn("Erro ao atualizar dados do TaskSidebar:", err);
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && activeCompanyRef.current === companyId) setLoading(false);
     }
   }, [companyId]);
 

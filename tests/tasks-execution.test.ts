@@ -7,7 +7,11 @@ import {
   obterTaskFallback,
   resolverTaskEfetiva,
 } from "../src/modules/tasks/tasksJson.js";
-import { TaskProcessManager } from "../src/modules/tasks/processManager.js";
+import {
+  criarAmbienteTask,
+  montarComandoShell,
+  TaskProcessManager,
+} from "../src/modules/tasks/processManager.js";
 import { sidebarStore } from "../src/modules/tasks/store.js";
 import {
   executeProjectTask,
@@ -15,6 +19,7 @@ import {
   fetchTaskLogs,
   clearTaskLogs,
   fetchCompanyTasks,
+  fetchCompanyProjects,
   deleteIssueCascade,
 } from "../src/modules/tasks/api.js";
 import * as fs from "node:fs";
@@ -365,6 +370,149 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       expect(texto).toContain("[linha truncada]");
       expect(Buffer.byteLength(texto, "utf-8")).toBeLessThanOrEqual(256 * 1024);
     });
+
+    it("deve reconstruir linhas antes de ocultar segredos divididos entre chunks", async () => {
+      const vscodeDir = path.join(tmpDir, ".vscode");
+      fs.mkdirSync(vscodeDir, { recursive: true });
+      fs.writeFileSync(path.join(vscodeDir, "tasks.json"), JSON.stringify({
+        version: "2.0.0",
+        tasks: [{
+          label: "RUN BUILD",
+          type: "process",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write('API_TO'); setTimeout(() => process.stdout.write('KEN=segredo-fragmentado\\n'), 30)"],
+        }],
+      }));
+
+      await manager.executeTask({
+        companyId: "empresa-1",
+        projectId: "proj-chunks",
+        rootDir: tmpDir,
+        taskType: "build",
+        action: "start",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const texto = manager.getLogs("empresa-1", "proj-chunks", "build").logs.join("\n");
+      expect(texto).not.toContain("segredo-fragmentado");
+      expect(texto).toContain("API_TOKEN=[REDACTED]");
+    });
+
+    it("deve preservar a última linha sem quebra e caracteres UTF-8 divididos", async () => {
+      const vscodeDir = path.join(tmpDir, ".vscode");
+      fs.mkdirSync(vscodeDir, { recursive: true });
+      fs.writeFileSync(path.join(vscodeDir, "tasks.json"), JSON.stringify({
+        version: "2.0.0",
+        tasks: [{
+          label: "RUN BUILD",
+          type: "process",
+          command: process.execPath,
+          args: ["-e", "const b=Buffer.from('final 🚀'); process.stdout.write(b.subarray(0,b.length-2)); setTimeout(()=>process.stdout.write(b.subarray(b.length-2)),30)"],
+        }],
+      }));
+
+      await manager.executeTask({
+        companyId: "empresa-1",
+        projectId: "proj-utf8",
+        rootDir: tmpDir,
+        taskType: "build",
+        action: "start",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const texto = manager.getLogs("empresa-1", "proj-utf8", "build").logs.join("\n");
+      expect(texto).toContain("final 🚀");
+      expect(texto).not.toContain("�");
+    });
+
+    it("deve excluir segredos do worker do ambiente herdado pela task", () => {
+      const previous = process.env.PLUGIN_SECRET_TEST;
+      process.env.PLUGIN_SECRET_TEST = "nao-herdar";
+      try {
+        const environment = criarAmbienteTask({ NODE_ENV: "test" });
+        expect(environment.PLUGIN_SECRET_TEST).toBeUndefined();
+        expect(environment.NODE_ENV).toBe("test");
+        expect(environment.PATH ?? environment.Path).toBeTruthy();
+        expect(environment.HOME ?? environment.USERPROFILE).toBeTruthy();
+      } finally {
+        if (previous === undefined) delete process.env.PLUGIN_SECRET_TEST;
+        else process.env.PLUGIN_SECRET_TEST = previous;
+      }
+    });
+
+    it("deve preservar argumentos shell com espaços e metacaracteres como um único valor", () => {
+      const command = montarComandoShell("printf", ["%s", "valor com espaço;seguro"]);
+      expect(command).toContain("valor com espaço;seguro");
+      if (process.platform !== "win32") expect(command).toContain("'valor com espaço;seguro'");
+    });
+
+    it.skipIf(process.platform === "win32")(
+      "deve manter e encerrar o grupo quando o processo principal deixa descendente resistente",
+      async () => {
+        const vscodeDir = path.join(tmpDir, ".vscode");
+        fs.mkdirSync(vscodeDir, { recursive: true });
+        fs.writeFileSync(path.join(vscodeDir, "tasks.json"), JSON.stringify({
+          version: "2.0.0",
+          tasks: [{
+            label: "RUN DEV",
+            type: "process",
+            command: "/bin/sh",
+            args: ["-c", "/bin/sh -c \"trap '' TERM; while :; do sleep 1; done\" &"],
+          }],
+        }));
+
+        const started = await manager.executeTask({
+          companyId: "empresa-1",
+          projectId: "proj-descendente",
+          rootDir: tmpDir,
+          taskType: "dev",
+          action: "start",
+        });
+        const groupPid = started.pid!;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(manager.getProcessStatus("empresa-1", "proj-descendente", "dev").status).toBe("rodando");
+
+        await manager.executeTask({
+          companyId: "empresa-1",
+          projectId: "proj-descendente",
+          taskType: "dev",
+          action: "stop",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(() => process.kill(-groupPid, 0)).toThrow();
+      },
+      5000,
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "deve reconciliar o status quando o último descendente termina naturalmente",
+      async () => {
+        const vscodeDir = path.join(tmpDir, ".vscode");
+        fs.mkdirSync(vscodeDir, { recursive: true });
+        fs.writeFileSync(path.join(vscodeDir, "tasks.json"), JSON.stringify({
+          version: "2.0.0",
+          tasks: [{
+            label: "RUN DEV",
+            type: "process",
+            command: process.execPath,
+            args: ["-e", "const {spawn}=require('node:child_process'); const c=spawn('/bin/sh',['-c','sleep 0.3'],{stdio:'ignore'}); c.unref(); process.exit(0)"],
+          }],
+        }));
+
+        await manager.executeTask({
+          companyId: "empresa-1",
+          projectId: "proj-reaper",
+          rootDir: tmpDir,
+          taskType: "dev",
+          action: "start",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(manager.getProcessStatus("empresa-1", "proj-reaper", "dev").status).toBe("rodando");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(manager.getProcessStatus("empresa-1", "proj-reaper", "dev").status).toBe("parado");
+      },
+      3000,
+    );
   });
 
   describe("5. Integração com Store e API Bridge", () => {
@@ -477,6 +625,26 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
           "/api/companies/empresa-1/issues?limit=250&offset=0",
           "/api/companies/empresa-1/issues?limit=250&offset=250",
         ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("deve buscar projetos uma única vez conforme o contrato do host", async () => {
+      const originalFetch = globalThis.fetch;
+      const urls: string[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        urls.push(url);
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/json" }),
+          json: async () => [{ id: "proj-1", name: "Projeto" }],
+        } as unknown as Response;
+      });
+      try {
+        await expect(fetchCompanyProjects("empresa-1")).resolves.toHaveLength(1);
+        expect(urls).toEqual(["/api/companies/empresa-1/projects?includeArchived=true"]);
       } finally {
         globalThis.fetch = originalFetch;
       }
