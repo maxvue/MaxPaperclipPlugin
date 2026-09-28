@@ -530,3 +530,19 @@ class AutoSaveEngine {
 }
 
 export const autoSaveEngine = new AutoSaveEngine();
+
+/**
+ * Função utilitária para testar e verificar se uma URL ou pathname é elegível para Auto-save
+ */
+export function shouldEnableAutoSaveForUrl(urlOrPath: string): boolean {
+  let pathname = urlOrPath;
+  try {
+    if (urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://")) {
+      const parsed = new URL(urlOrPath);
+      pathname = parsed.pathname;
+    }
+  } catch {
+    pathname = urlOrPath;
+  }
+  return autoSaveEngine.isEligibleRoute(pathname);
+}

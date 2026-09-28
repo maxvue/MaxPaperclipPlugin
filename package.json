@@ -19,9 +19,17 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "overrides": {
+    "@paperclipai/shared": "file:/home/johnattas/GitHub/paperclip/packages/shared"
+  },
+  "pnpm": {
+    "overrides": {
+      "@paperclipai/shared": "file:/home/johnattas/GitHub/paperclip/packages/shared"
+    }
+  },
   "dependencies": {
     "@paperclipai/plugin-sdk": "file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz",
-    "@paperclipai/shared": "file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz"
+    "@paperclipai/shared": "file:/home/johnattas/GitHub/paperclip/packages/shared"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -25,9 +25,11 @@ const DEFAULT_SETTINGS: MaxPluginSettings = {
 type SettingsListener = (settings: MaxPluginSettings) => void;
 const listeners = new Set<SettingsListener>();
 
+let memorySettings: MaxPluginSettings | null = null;
+
 export function getSettings(): MaxPluginSettings {
   if (typeof window === "undefined" || !window.localStorage) {
-    return { ...DEFAULT_SETTINGS };
+    return memorySettings ? { ...memorySettings } : { ...DEFAULT_SETTINGS };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -48,6 +50,8 @@ export function getSettings(): MaxPluginSettings {
 export function updateSetting<K extends keyof MaxPluginSettings>(key: K, value: boolean): MaxPluginSettings {
   const current = getSettings();
   const next = { ...current, [key]: value };
+  memorySettings = next;
+
   if (typeof window !== "undefined" && window.localStorage) {
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));

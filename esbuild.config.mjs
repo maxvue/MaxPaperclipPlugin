@@ -2,6 +2,13 @@ import esbuild from "esbuild";
 import { createPluginBundlerPresets } from "@paperclipai/plugin-sdk/bundlers";
 
 const presets = createPluginBundlerPresets({ uiEntry: "src/ui/index.tsx" });
+const sharedPath = "/home/johnattas/GitHub/paperclip/packages/shared/dist/index.js";
+for (const key of ["worker", "manifest", "ui"]) {
+  presets.esbuild[key].alias = {
+    ...presets.esbuild[key].alias,
+    "@paperclipai/shared": sharedPath,
+  };
+}
 const watch = process.argv.includes("--watch");
 
 const workerCtx = await esbuild.context(presets.esbuild.worker);

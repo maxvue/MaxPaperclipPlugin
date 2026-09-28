@@ -12,8 +12,8 @@ importers:
         specifier: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz
         version: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz(react@19.3.0)
       '@paperclipai/shared':
-        specifier: file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz
-        version: file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz
+        specifier: file:/home/johnattas/GitHub/paperclip/packages/shared
+        version: file:../../../paperclip/packages/shared
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -208,7 +208,7 @@ packages:
     resolution: {integrity: sha512-J1yXrIlNDZVzE3ada310xeAw7nH8yCAyLPuUIsjKatFPmfn5bS1oW+cM+QsGOtVWd5nhSpbwZWx/rue+r5Z+PA==}
 
   '@paperclipai/plugin-sdk@file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz':
-    resolution: {integrity: sha512-7/yNWtpopbmCVv+vxztR9bdP0drnW9XMUqFxYdcQRbzFs5bP/fFzkp9X/FF2El7cVxy06DkZ5vdbXHmDBM9rjQ==, tarball: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz}
+    resolution: {integrity: sha512-UqaQHOWv8Jf+gz7gZcQCk1/zIj2oAgqRz96bdhzQ142XPmAgEsOUOGVJEKbMALiXgbwG1+AcA5AtkwQF39I2XQ==, tarball: file:.paperclip-sdk/paperclipai-plugin-sdk-1.0.0.tgz}
     version: 1.0.0
     engines: {node: '>=24.11.0'}
     hasBin: true
@@ -221,9 +221,8 @@ packages:
   '@paperclipai/shared@0.3.1':
     resolution: {integrity: sha512-ezo1DTqH2OeW4w1BvDKhtMAep7ZxO25ITD62lCw24ez7diy2sPXSHwiNDovG6OsDFqgjMXsxK63r4GndWVjhDA==}
 
-  '@paperclipai/shared@file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz':
-    resolution: {integrity: sha512-3pqZ0bpBHpsuIwtkI2lUmkfpbSA80221y4oGzsnnQl9EoXxOPlhioyRuFJOf8MqDmF30MNDE8H22ToYlJgdKNg==, tarball: file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz}
-    version: 0.3.1
+  '@paperclipai/shared@file:../../../paperclip/packages/shared':
+    resolution: {directory: ../../../paperclip/packages/shared, type: directory}
     engines: {node: '>=24.11.0'}
 
   '@rolldown/binding-android-arm-eabi@1.2.11':
@@ -775,7 +774,7 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  '@paperclipai/shared@file:.paperclip-sdk/paperclipai-shared-0.3.1.tgz':
+  '@paperclipai/shared@file:../../../paperclip/packages/shared':
     dependencies:
       three: 0.185.1
       zod: 4.6.5
