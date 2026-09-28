@@ -30,16 +30,21 @@ export async function hostFetchJson<T>(path: string, init?: RequestInit): Promis
 }
 
 /**
- * Busca todas as tarefas da empresa que não estejam arquivadas.
+ * Busca todas as tarefas da empresa (ativas e opcionalmente arquivadas).
  */
-export async function fetchCompanyTasks(companyId: string): Promise<IssueSummary[]> {
+export async function fetchCompanyTasks(
+  companyId: string,
+  includeArchived = true,
+): Promise<IssueSummary[]> {
   try {
     const raw = await hostFetchJson<IssueSummary[] | { issues: IssueSummary[] }>(
-      `/api/companies/${companyId}/issues?limit=100`,
+      `/api/companies/${companyId}/issues?limit=250`,
     );
     const list = Array.isArray(raw) ? raw : (raw?.issues ?? []);
-    // Filtra tarefas arquivadas (hiddenAt não nulo)
-    return list.filter((item) => !item.hiddenAt);
+    if (!includeArchived) {
+      return list.filter((item) => !item.hiddenAt);
+    }
+    return list;
   } catch (err) {
     console.warn("Erro ao buscar tarefas da empresa:", err);
     return [];
@@ -88,5 +93,117 @@ export async function fetchIssueLiveRuns(issueId: string): Promise<LiveRun[]> {
   } catch (err) {
     console.warn(`Erro ao buscar execuções da tarefa ${issueId}:`, err);
     return [];
+  }
+}
+
+/**
+ * Arquiva uma tarefa (marcando hiddenAt e/ou arquivando da inbox).
+ */
+export async function archiveIssue(issueId: string): Promise<boolean> {
+  try {
+    // 1. Tenta atualizar hiddenAt via PATCH na issue
+    await hostFetchJson(`/api/issues/${issueId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ hiddenAt: new Date().toISOString() }),
+    });
+
+    // 2. Tenta também arquivar da inbox
+    try {
+      await hostFetchJson(`/api/issues/${issueId}/inbox-archive`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    } catch {
+      // Ignora se o endpoint de inbox-archive falhar
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(`Erro ao arquivar tarefa ${issueId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Desarquiva uma tarefa (limpando hiddenAt).
+ */
+export async function unarchiveIssue(issueId: string): Promise<boolean> {
+  try {
+    // 1. Atualiza hiddenAt como null via PATCH
+    await hostFetchJson(`/api/issues/${issueId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ hiddenAt: null }),
+    });
+
+    // 2. Tenta também remover do inbox-archive se existir
+    try {
+      await hostFetchJson(`/api/issues/${issueId}/inbox-archive`, {
+        method: "DELETE",
+      });
+    } catch {
+      // Ignora erro
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(`Erro ao desarquivar tarefa ${issueId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Aciona execução de task do projeto (dev ou build).
+ */
+export async function executeProjectTask(
+  projectId: string,
+  taskType: "dev" | "build",
+): Promise<boolean> {
+  try {
+    // Tenta disparar comando no workspace de runtime do projeto se disponível
+    await hostFetchJson(`/api/projects/${projectId}/tasks/${taskType}/run`, {
+      method: "POST",
+      body: JSON.stringify({ task: taskType }),
+    });
+    return true;
+  } catch {
+    // Se o backend não tiver o endpoint mapeado, o frontend mantém o controle de estado e feedback visual
+    return false;
+  }
+}
+
+/**
+ * Remove permanentemente uma tarefa via DELETE /api/issues/:id.
+ */
+export async function deleteIssue(issueId: string): Promise<boolean> {
+  try {
+    await hostFetchJson(`/api/issues/${issueId}`, {
+      method: "DELETE",
+    });
+    return true;
+  } catch (err) {
+    console.warn(`Erro ao remover tarefa permanentemente ${issueId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Remove uma tarefa e todas as suas subtarefas vinculadas em cascata.
+ * As tarefas-filhas são removidas primeiro para evitar violações de chave estrangeira.
+ */
+export async function deleteIssueCascade(issueId: string, childIds: string[]): Promise<boolean> {
+  try {
+    // 1. Remove primeiro todas as subtarefas vinculadas
+    for (const childId of childIds) {
+      const childSuccess = await deleteIssue(childId);
+      if (!childSuccess) {
+        console.warn(`Aviso: falha ao remover subtarefa ${childId}, prosseguindo com as demais.`);
+      }
+    }
+
+    // 2. Remove a tarefa principal
+    return await deleteIssue(issueId);
+  } catch (err) {
+    console.warn(`Erro na remoção em cascata da tarefa ${issueId}:`, err);
+    return false;
   }
 }
