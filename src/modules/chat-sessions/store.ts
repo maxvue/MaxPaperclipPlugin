@@ -1,9 +1,19 @@
 import type { ChatSession, ChatMessage } from "./types.js";
 
 const CUSTOM_TITLES_KEY_PREFIX = "max:chat-sessions:custom-titles:";
+const ARCHIVED_SESSIONS_KEY_PREFIX = "max:chat-sessions:archived:";
+const DELETED_SESSIONS_KEY_PREFIX = "max:chat-sessions:deleted:";
 
 export function getCustomTitlesKey(companyId: string, agentRef: string): string {
   return `${CUSTOM_TITLES_KEY_PREFIX}${companyId}:${agentRef}`;
+}
+
+export function getArchivedSessionsKey(companyId: string, agentRef: string): string {
+  return `${ARCHIVED_SESSIONS_KEY_PREFIX}${companyId}:${agentRef}`;
+}
+
+export function getDeletedSessionsKey(companyId: string, agentRef: string): string {
+  return `${DELETED_SESSIONS_KEY_PREFIX}${companyId}:${agentRef}`;
 }
 
 export function loadCustomTitles(companyId: string, agentRef: string): Record<string, string> {
@@ -24,6 +34,73 @@ export function saveCustomTitle(companyId: string, agentRef: string, sessionId: 
     window.localStorage.setItem(getCustomTitlesKey(companyId, agentRef), JSON.stringify(titles));
   } catch (err) {
     console.error("[MaxPaperclipPlugin] Erro ao salvar título customizado de sessão:", err);
+  }
+}
+
+export function loadArchivedSessionIds(companyId: string, agentRef: string): Set<string> {
+  if (typeof window === "undefined" || !window.localStorage) return new Set();
+  try {
+    const raw = window.localStorage.getItem(getArchivedSessionsKey(companyId, agentRef));
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveArchivedSessionIds(companyId: string, agentRef: string, ids: Set<string>): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(getArchivedSessionsKey(companyId, agentRef), JSON.stringify(Array.from(ids)));
+  } catch (err) {
+    console.error("[MaxPaperclipPlugin] Erro ao salvar sessões arquivadas:", err);
+  }
+}
+
+export function archiveSession(companyId: string, agentRef: string, sessionId: string): void {
+  const archived = loadArchivedSessionIds(companyId, agentRef);
+  archived.add(sessionId);
+  saveArchivedSessionIds(companyId, agentRef, archived);
+}
+
+export function unarchiveSession(companyId: string, agentRef: string, sessionId: string): void {
+  const archived = loadArchivedSessionIds(companyId, agentRef);
+  archived.delete(sessionId);
+  saveArchivedSessionIds(companyId, agentRef, archived);
+}
+
+export function loadDeletedSessionIds(companyId: string, agentRef: string): Set<string> {
+  if (typeof window === "undefined" || !window.localStorage) return new Set();
+  try {
+    const raw = window.localStorage.getItem(getDeletedSessionsKey(companyId, agentRef));
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveDeletedSessionIds(companyId: string, agentRef: string, ids: Set<string>): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(getDeletedSessionsKey(companyId, agentRef), JSON.stringify(Array.from(ids)));
+  } catch (err) {
+    console.error("[MaxPaperclipPlugin] Erro ao salvar sessões deletadas:", err);
+  }
+}
+
+export function deleteSessionPermanently(companyId: string, agentRef: string, sessionId: string): void {
+  const deleted = loadDeletedSessionIds(companyId, agentRef);
+  deleted.add(sessionId);
+  saveDeletedSessionIds(companyId, agentRef, deleted);
+
+  // Se a sessão estiver na lista de arquivadas, limpa também
+  const archived = loadArchivedSessionIds(companyId, agentRef);
+  if (archived.has(sessionId)) {
+    archived.delete(sessionId);
+    saveArchivedSessionIds(companyId, agentRef, archived);
   }
 }
 
@@ -66,6 +143,9 @@ export function groupCommentsIntoSessions(
   comments: RawIssueComment[],
 ): { sessions: ChatSession[]; messagesBySession: Map<string, ChatMessage[]> } {
   const customTitles = loadCustomTitles(companyId, agentRef);
+  const archivedIds = loadArchivedSessionIds(companyId, agentRef);
+  const deletedIds = loadDeletedSessionIds(companyId, agentRef);
+
   const sessions: ChatSession[] = [];
   const messagesBySession = new Map<string, ChatMessage[]>();
 
@@ -82,12 +162,21 @@ export function groupCommentsIntoSessions(
   let sessionUpdatedAt = sessionCreatedAt;
 
   const pushCurrentSession = (index: number) => {
+    // Registra mensagens para visibilidade no thread mesmo se a sessão foi excluída
+    messagesBySession.set(currentSessionId, [...currentMessages]);
+
+    // Se a sessão foi deletada definitivamente, não adiciona ao array de sessões exibidas
+    if (deletedIds.has(currentSessionId)) {
+      return;
+    }
+
     const snippet = currentMessages.length > 0
       ? currentMessages[currentMessages.length - 1].text.slice(0, 70).replace(/\n/g, " ")
       : "Nova sessão iniciada";
 
     const customTitle = customTitles[currentSessionId];
     const title = customTitle || generateSessionTitle(firstUserText, index);
+    const isArchived = archivedIds.has(currentSessionId);
 
     sessions.push({
       id: currentSessionId,
@@ -101,9 +190,9 @@ export function groupCommentsIntoSessions(
       messagesCount: currentMessages.length,
       snippet,
       isCustomTitle: Boolean(customTitle),
+      isArchived,
+      isDeleted: false,
     });
-
-    messagesBySession.set(currentSessionId, [...currentMessages]);
   };
 
   for (const comment of sorted) {
@@ -150,17 +239,24 @@ export function groupCommentsIntoSessions(
 }
 
 /**
- * Filtra sessões por termo de busca no título ou nas mensagens internas
+ * Filtra sessões por termo de busca no título ou nas mensagens internas,
+ * com suporte opcional para filtrar apenas arquivadas ou apenas ativas.
  */
 export function filterSessions(
   sessions: ChatSession[],
   messagesBySession: Map<string, ChatMessage[]>,
   query: string,
+  onlyArchived?: boolean,
 ): ChatSession[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return sessions;
+  let list = sessions;
+  if (onlyArchived !== undefined) {
+    list = list.filter((s) => (onlyArchived ? Boolean(s.isArchived) : !s.isArchived));
+  }
 
-  return sessions.filter((session) => {
+  const q = query.trim().toLowerCase();
+  if (!q) return list;
+
+  return list.filter((session) => {
     if (session.title.toLowerCase().includes(q)) return true;
     const messages = messagesBySession.get(session.id) ?? [];
     return messages.some((m) => m.text.toLowerCase().includes(q));
@@ -188,4 +284,3 @@ export const activeChatSessionStore = {
     };
   },
 };
-

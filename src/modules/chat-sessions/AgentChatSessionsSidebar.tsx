@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Search, X, PanelLeftClose, PanelLeft, RefreshCw, MessageSquareDashed } from "lucide-react";
-import type { ChatSession, ChatMessage } from "./types.js";
+import { Plus, Search, X, PanelLeftClose, PanelLeft, RefreshCw, MessageSquareDashed, Archive } from "lucide-react";
+import type { ChatSession } from "./types.js";
 import {
   parseChatRoute,
   fetchAgentChatContext,
@@ -15,10 +15,14 @@ import {
   groupCommentsIntoSessions,
   filterSessions,
   saveCustomTitle,
+  archiveSession,
+  unarchiveSession,
+  deleteSessionPermanently,
   activeChatSessionStore,
   type RawIssueComment,
 } from "./store.js";
 import { SessionItem } from "./SessionItem.js";
+import { SessionDeleteConfirmModal } from "./SessionDeleteConfirmModal.js";
 import { getSettings, subscribeSettings } from "../../config/settings.js";
 
 const SIDEBAR_WIDTH_KEY = "max:chat-sessions:sidebar-width";
@@ -54,6 +58,11 @@ export function AgentChatSessionsSidebar() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [container, setContainer] = useState<HTMLElement | null>(findChatLayoutContainer);
 
+  // Estados de Arquivamento e Remoção
+  const [viewingArchived, setViewingArchived] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState<ChatSession | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   useEffect(() => {
     const updateTarget = () => {
       const target = findChatLayoutContainer();
@@ -80,6 +89,8 @@ export function AgentChatSessionsSidebar() {
     setRawComments([]);
     setIssueId(null);
     setSearchQuery("");
+    setViewingArchived(false);
+    setSessionToDelete(null);
   }, [routeInfo.agentRef, routeInfo.companyPrefix]);
 
   // Sincroniza sessão ativa no store global compartilhado
@@ -153,6 +164,8 @@ export function AgentChatSessionsSidebar() {
         updatedAt: new Date().toISOString(),
         messagesCount: 0,
         snippet: "Nova conversa",
+        isArchived: false,
+        isDeleted: false,
       };
       return {
         sessions: [initialSession],
@@ -163,13 +176,22 @@ export function AgentChatSessionsSidebar() {
     return groupCommentsIntoSessions(companyId, routeInfo.agentRef, issueId, rawComments);
   }, [companyId, routeInfo.agentRef, issueId, rawComments]);
 
+  // Contagens
+  const activeSessionsCount = useMemo(() => sessions.filter((s) => !s.isArchived).length, [sessions]);
+  const archivedSessionsCount = useMemo(() => sessions.filter((s) => s.isArchived).length, [sessions]);
+
   // Define a sessão ativa inicial se ainda não selecionada
   useEffect(() => {
     if (sessions.length > 0) {
+      // Prioriza sessões ativas (não arquivadas)
+      const activeSessions = sessions.filter((s) => !s.isArchived);
+      const targetPool = activeSessions.length > 0 ? activeSessions : sessions;
+
       if (!activeSessionId || !sessions.some((s) => s.id === activeSessionId)) {
-        // Por padrão, seleciona a última sessão (a mais recente)
-        const lastSession = sessions[sessions.length - 1];
-        setActiveSessionId(lastSession.id);
+        const lastSession = targetPool[targetPool.length - 1];
+        if (lastSession) {
+          setActiveSessionId(lastSession.id);
+        }
       }
     }
   }, [sessions, activeSessionId]);
@@ -192,12 +214,12 @@ export function AgentChatSessionsSidebar() {
     });
   };
 
-  // Sessões filtradas pela busca
+  // Sessões filtradas pela busca e pelo modo arquivados
   const filteredSessions = useMemo(() => {
-    const list = filterSessions(sessions, messagesBySession, searchQuery);
+    const list = filterSessions(sessions, messagesBySession, searchQuery, viewingArchived);
     // Ordena da mais recente para a mais antiga na visualização
     return [...list].sort((a, b) => b.generation - a.generation);
-  }, [sessions, messagesBySession, searchQuery]);
+  }, [sessions, messagesBySession, searchQuery, viewingArchived]);
 
   // Verifica se o usuário está navegando em uma sessão de histórico anterior à mais recente
   const isViewingHistory = useMemo(() => {
@@ -238,6 +260,62 @@ export function AgentChatSessionsSidebar() {
     if (!companyId || !routeInfo.agentRef) return;
     saveCustomTitle(companyId, routeInfo.agentRef, session.id, newTitle);
     refreshChatData(true);
+  };
+
+  // Ação de Arquivar Conversa
+  const handleArchive = (session: ChatSession) => {
+    if (!companyId || !routeInfo.agentRef) return;
+    archiveSession(companyId, routeInfo.agentRef, session.id);
+
+    // Se a sessão arquivada for a ativa, seleciona a sessão ativa mais recente que restar
+    if (session.id === activeSessionId) {
+      const remainingActive = sessions.filter((s) => s.id !== session.id && !s.isArchived);
+      if (remainingActive.length > 0) {
+        const next = remainingActive[remainingActive.length - 1];
+        handleSelectSession(next);
+      }
+    }
+
+    refreshChatData(true);
+  };
+
+  // Ação de Desarquivar Conversa
+  const handleUnarchive = (session: ChatSession) => {
+    if (!companyId || !routeInfo.agentRef) return;
+    unarchiveSession(companyId, routeInfo.agentRef, session.id);
+    refreshChatData(true);
+  };
+
+  // Ação de Solicitar Exclusão Permanente (Abre modal)
+  const handleRequestDelete = (session: ChatSession) => {
+    setSessionToDelete(session);
+  };
+
+  // Ação de Confirmar Exclusão Permanente
+  const handleConfirmDelete = async () => {
+    if (!sessionToDelete || !companyId || !routeInfo.agentRef) return;
+    setIsDeleting(true);
+
+    try {
+      const deletedId = sessionToDelete.id;
+      deleteSessionPermanently(companyId, routeInfo.agentRef, deletedId);
+
+      // Se a sessão excluída for a ativa, seleciona a mais recente restante
+      if (deletedId === activeSessionId) {
+        const remaining = sessions.filter((s) => s.id !== deletedId && !s.isArchived);
+        if (remaining.length > 0) {
+          const next = remaining[remaining.length - 1];
+          handleSelectSession(next);
+        } else {
+          setActiveSessionId(null);
+        }
+      }
+
+      setSessionToDelete(null);
+      await refreshChatData(true);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Redimensionamento lateral
@@ -284,7 +362,7 @@ export function AgentChatSessionsSidebar() {
         type="button"
         onClick={() => setCollapsed(false)}
         title="Expandir lista de chats"
-        className="p-2 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+        className="p-2 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
       >
         <PanelLeft className="w-4 h-4" />
       </button>
@@ -301,7 +379,7 @@ export function AgentChatSessionsSidebar() {
             Sessões do Chat
           </span>
           <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded-full text-muted-foreground font-mono">
-            {sessions.length}
+            {viewingArchived ? archivedSessionsCount : activeSessionsCount}
           </span>
         </div>
 
@@ -310,7 +388,7 @@ export function AgentChatSessionsSidebar() {
             type="button"
             onClick={() => refreshChatData()}
             title="Atualizar conversas"
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -318,7 +396,7 @@ export function AgentChatSessionsSidebar() {
             type="button"
             onClick={() => setCollapsed(true)}
             title="Recolher painel de chats"
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
           >
             <PanelLeftClose className="w-3.5 h-3.5" />
           </button>
@@ -339,7 +417,7 @@ export function AgentChatSessionsSidebar() {
       </div>
 
       {/* Indicador de Histórico quando visualizando sessão anterior */}
-      {isViewingHistory && (
+      {isViewingHistory && !viewingArchived && (
         <div className="px-2.5 pb-2 shrink-0">
           <div className="flex items-center justify-between gap-1 px-2.5 py-1.5 rounded-md bg-muted/60 border border-border/80 text-[11px] text-muted-foreground">
             <span className="truncate">Visualizando histórico</span>
@@ -357,27 +435,63 @@ export function AgentChatSessionsSidebar() {
         </div>
       )}
 
-      {/* Input de Pesquisa dentro do Chat */}
-      <div className="px-2.5 pb-2 shrink-0">
-        <div className="relative flex items-center">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 text-muted-foreground/70 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Pesquisar nos chats..."
-            className="w-full h-7 pl-8 pr-7 text-xs bg-muted/40 hover:bg-muted/60 focus:bg-background rounded-md border border-border/60 outline-none text-foreground placeholder:text-muted-foreground/60 transition-colors"
-          />
-          {searchQuery && (
+      {/* Faixa de Modo Arquivados */}
+      {viewingArchived && (
+        <div className="px-2.5 pb-2 shrink-0">
+          <div className="flex items-center justify-between gap-1 px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-600 dark:text-amber-400">
+            <span className="font-medium">Modo Arquivados ({archivedSessionsCount})</span>
             <button
               type="button"
-              onClick={() => setSearchQuery("")}
-              className="absolute right-2 text-muted-foreground hover:text-foreground p-0.5"
-              title="Limpar pesquisa"
+              onClick={() => setViewingArchived(false)}
+              className="hover:underline font-semibold cursor-pointer"
             >
-              <X className="w-3 h-3" />
+              Voltar às ativas
             </button>
-          )}
+          </div>
+        </div>
+      )}
+
+      {/* Barra de Pesquisa + Botão de Arquivados no Topo */}
+      <div className="px-2.5 pb-2 shrink-0">
+        <div className="flex items-center gap-1.5">
+          <div className="relative flex-1 flex items-center">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 text-muted-foreground/70 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Pesquisar nos chats..."
+              className="w-full h-7 pl-8 pr-7 text-xs bg-muted/40 hover:bg-muted/60 focus:bg-background rounded-md border border-border/60 outline-none text-foreground placeholder:text-muted-foreground/60 transition-colors"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 text-muted-foreground hover:text-foreground p-0.5 cursor-pointer"
+                title="Limpar pesquisa"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Botão de Alternar Modo Arquivados */}
+          <button
+            type="button"
+            onClick={() => setViewingArchived(!viewingArchived)}
+            className={`h-7 px-2 flex items-center justify-center rounded-md border text-xs transition-colors cursor-pointer shrink-0 ${
+              viewingArchived
+                ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/40 font-semibold shadow-2xs"
+                : "bg-muted/40 hover:bg-muted/70 text-muted-foreground hover:text-foreground border-border/60"
+            }`}
+            title={viewingArchived ? "Exibir conversas ativas" : "Exibir conversas arquivadas"}
+            aria-label={viewingArchived ? "Exibir conversas ativas" : "Exibir conversas arquivadas"}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            {archivedSessionsCount > 0 && !viewingArchived && (
+              <span className="ml-1 text-[10px] font-mono opacity-80">{archivedSessionsCount}</span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -386,7 +500,9 @@ export function AgentChatSessionsSidebar() {
         {filteredSessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 px-4 text-center text-muted-foreground/80">
             <MessageSquareDashed className="w-8 h-8 mb-2 stroke-1 opacity-50" />
-            <p className="text-xs">Nenhuma sessão encontrada</p>
+            <p className="text-xs">
+              {viewingArchived ? "Nenhuma conversa arquivada" : "Nenhuma conversa encontrada"}
+            </p>
           </div>
         ) : (
           filteredSessions.map((session) => (
@@ -394,8 +510,12 @@ export function AgentChatSessionsSidebar() {
               key={session.id}
               session={session}
               isActive={session.id === activeSessionId}
+              isArchivedView={viewingArchived}
               onSelect={handleSelectSession}
               onRename={handleRename}
+              onArchive={handleArchive}
+              onUnarchive={handleUnarchive}
+              onDelete={handleRequestDelete}
             />
           ))
         )}
@@ -408,6 +528,15 @@ export function AgentChatSessionsSidebar() {
         onPointerUp={handlePointerUp}
         title="Redimensionar barra de chats"
         className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary transition-colors z-20"
+      />
+
+      {/* Modal de Confirmação para Remoção Definitiva */}
+      <SessionDeleteConfirmModal
+        isOpen={Boolean(sessionToDelete)}
+        session={sessionToDelete}
+        loading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setSessionToDelete(null)}
       />
     </aside>
   );

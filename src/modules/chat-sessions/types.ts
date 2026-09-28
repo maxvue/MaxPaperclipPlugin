@@ -25,6 +25,8 @@ export interface ChatSession {
   messagesCount: number;
   snippet: string;
   isCustomTitle?: boolean;
+  isArchived?: boolean;
+  isDeleted?: boolean;
 }
 
 export interface ChatSessionsState {

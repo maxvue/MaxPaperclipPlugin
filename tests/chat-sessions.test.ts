@@ -11,6 +11,11 @@ import {
   filterSessions,
   saveCustomTitle,
   loadCustomTitles,
+  archiveSession,
+  unarchiveSession,
+  loadArchivedSessionIds,
+  deleteSessionPermanently,
+  loadDeletedSessionIds,
   type RawIssueComment,
 } from "../src/modules/chat-sessions/store.js";
 import type { ChatSession, ChatMessage } from "../src/modules/chat-sessions/types.js";
@@ -283,6 +288,172 @@ describe("MaxPaperclipPlugin - Módulo de Sessões de Chat (Chat Sessions)", () 
       expect(msg0.style.display).toBe("none");
       expect(marker1.style.display).toBe("none"); // divisor oculto para iniciar tela limpa
       expect(msg1.style.display).toBe("");
+    });
+  });
+
+  describe("Arquivamento e Desarquivamento de Conversas", () => {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    it("deve permitir arquivar e desarquivar uma sessão persistindo no localStorage", () => {
+      const companyId = "comp-1";
+      const agentRef = "ceo";
+      const sessionId = "session-gen-0";
+
+      expect(loadArchivedSessionIds(companyId, agentRef).has(sessionId)).toBe(false);
+
+      // Arquiva a sessão
+      archiveSession(companyId, agentRef, sessionId);
+      expect(loadArchivedSessionIds(companyId, agentRef).has(sessionId)).toBe(true);
+
+      // Desarquiva a sessão
+      unarchiveSession(companyId, agentRef, sessionId);
+      expect(loadArchivedSessionIds(companyId, agentRef).has(sessionId)).toBe(false);
+    });
+
+    it("deve marcar sessões como arquivadas em groupCommentsIntoSessions", () => {
+      const companyId = "comp-2";
+      const agentRef = "auditor";
+      const issueId = "iss-1";
+
+      archiveSession(companyId, agentRef, "session-gen-0");
+
+      const comments: RawIssueComment[] = [
+        {
+          id: "c1",
+          body: "Mensagem sessão 0",
+          authorUserId: "u1",
+          createdAt: "2026-09-28T10:00:00Z",
+        },
+        {
+          id: "c2",
+          body: "/new",
+          conversationSessionGeneration: 1,
+          createdAt: "2026-09-28T10:05:00Z",
+        },
+        {
+          id: "c3",
+          body: "Mensagem sessão 1",
+          authorUserId: "u1",
+          createdAt: "2026-09-28T10:06:00Z",
+        },
+      ];
+
+      const { sessions } = groupCommentsIntoSessions(companyId, agentRef, issueId, comments);
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0].id).toBe("session-gen-0");
+      expect(sessions[0].isArchived).toBe(true);
+      expect(sessions[1].id).toBe("session-gen-1");
+      expect(sessions[1].isArchived).toBe(false);
+    });
+
+    it("deve filtrar apenas arquivadas quando onlyArchived for true", () => {
+      const sessions: ChatSession[] = [
+        {
+          id: "s1",
+          agentRef: "ceo",
+          companyId: "comp-1",
+          issueId: "i1",
+          generation: 0,
+          title: "Sessão Ativa",
+          createdAt: "",
+          updatedAt: "",
+          messagesCount: 1,
+          snippet: "",
+          isArchived: false,
+        },
+        {
+          id: "s2",
+          agentRef: "ceo",
+          companyId: "comp-1",
+          issueId: "i1",
+          generation: 1,
+          title: "Sessão Arquivada",
+          createdAt: "",
+          updatedAt: "",
+          messagesCount: 1,
+          snippet: "",
+          isArchived: true,
+        },
+      ];
+
+      const messagesMap = new Map<string, ChatMessage[]>();
+
+      // Modo normal (apenas ativas)
+      const actives = filterSessions(sessions, messagesMap, "", false);
+      expect(actives).toHaveLength(1);
+      expect(actives[0].id).toBe("s1");
+
+      // Modo arquivados (apenas arquivadas)
+      const archived = filterSessions(sessions, messagesMap, "", true);
+      expect(archived).toHaveLength(1);
+      expect(archived[0].id).toBe("s2");
+    });
+  });
+
+  describe("Remoção Definitiva de Conversas", () => {
+    beforeEach(() => {
+      window.localStorage.clear();
+    });
+
+    it("deve salvar sessão como deletada permanentemente e limpar dos arquivados", () => {
+      const companyId = "comp-3";
+      const agentRef = "dev";
+      const sessionId = "session-gen-1";
+
+      archiveSession(companyId, agentRef, sessionId);
+      expect(loadArchivedSessionIds(companyId, agentRef).has(sessionId)).toBe(true);
+
+      // Deleta permanentemente
+      deleteSessionPermanently(companyId, agentRef, sessionId);
+
+      expect(loadDeletedSessionIds(companyId, agentRef).has(sessionId)).toBe(true);
+      expect(loadArchivedSessionIds(companyId, agentRef).has(sessionId)).toBe(false);
+    });
+
+    it("deve ocultar e descartar sessões deletadas da lista retornada por groupCommentsIntoSessions", () => {
+      const companyId = "comp-4";
+      const agentRef = "qa";
+      const issueId = "iss-2";
+
+      deleteSessionPermanently(companyId, agentRef, "session-gen-0");
+
+      const comments: RawIssueComment[] = [
+        {
+          id: "c1",
+          body: "Mensagem sessão deletada",
+          authorUserId: "u1",
+          createdAt: "2026-09-28T10:00:00Z",
+        },
+        {
+          id: "c2",
+          body: "/new",
+          conversationSessionGeneration: 1,
+          createdAt: "2026-09-28T10:05:00Z",
+        },
+        {
+          id: "c3",
+          body: "Mensagem sessão preservada",
+          authorUserId: "u1",
+          createdAt: "2026-09-28T10:06:00Z",
+        },
+      ];
+
+      const { sessions, messagesBySession } = groupCommentsIntoSessions(
+        companyId,
+        agentRef,
+        issueId,
+        comments,
+      );
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].id).toBe("session-gen-1");
+      expect(sessions[0].title).toBe("Mensagem sessão preservada");
+
+      // As mensagens da sessão deletada continuam mapeadas para preservar lógica de DOM
+      expect(messagesBySession.has("session-gen-0")).toBe(true);
+      expect(messagesBySession.has("session-gen-1")).toBe(true);
     });
   });
 });
