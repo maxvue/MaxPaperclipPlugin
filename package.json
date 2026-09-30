@@ -1,6 +1,6 @@
 {
   "name": "@max/paperclip-plugin",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "Plugin consolidado MaxPaperclipPlugin: Ícones, Tradutor PT-BR, Aba de Tarefas, Auto-Save e Editor de Capacidades.",
   "license": "MIT",
   "author": "MaxVue contributors",
