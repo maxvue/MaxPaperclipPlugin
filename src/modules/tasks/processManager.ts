@@ -137,6 +137,61 @@ export class TaskProcessManager {
     }
   }
 
+  private getOrCreateRecord(
+    companyId: string,
+    projectId: string,
+    taskType: TipoDeTask,
+    projectName?: string
+  ): ProcessRecord {
+    const key = TaskProcessManager.key(companyId, projectId, taskType);
+    const existente = this.processes.get(key);
+    if (existente) {
+      if (projectName) existente.projectName = projectName;
+      return existente;
+    }
+
+    const record: ProcessRecord = {
+      companyId,
+      projectId,
+      projectName,
+      taskType,
+      status: "parado",
+      logs: [],
+      logBytes: 0,
+      generation: 0,
+      stdoutRemainder: "",
+      stderrRemainder: "",
+      stdoutDecoder: new StringDecoder("utf8"),
+      stderrDecoder: new StringDecoder("utf8"),
+    };
+    this.processes.set(key, record);
+    return record;
+  }
+
+  registrarFalhaDeExecucao(
+    companyId: string,
+    projectId: string,
+    taskType: TipoDeTask,
+    message: string,
+    projectName?: string
+  ): ExecuteTaskResult {
+    const record = this.getOrCreateRecord(companyId, projectId, taskType, projectName);
+    record.generation += 1;
+    record.status = "erro";
+    record.pid = undefined;
+    record.processGroupPid = undefined;
+    record.child = undefined;
+    record.exitCode = null;
+    record.startedAt = undefined;
+    record.stoppedAt = new Date().toISOString();
+    record.stdoutRemainder = "";
+    record.stderrRemainder = "";
+    record.stdoutDecoder = new StringDecoder("utf8");
+    record.stderrDecoder = new StringDecoder("utf8");
+    this.appendLog(record, `[MaxPaperclipPlugin] Falha ao executar task: ${message}`);
+    return { success: false, status: "erro", message };
+  }
+
   private appendChunk(record: ProcessRecord, chunk: string | Buffer, stream: "stdout" | "stderr"): void {
     const remainderKey = stream === "stdout" ? "stdoutRemainder" : "stderrRemainder";
     const decoder = stream === "stdout" ? record.stdoutDecoder : record.stderrDecoder;
@@ -374,12 +429,16 @@ export class TaskProcessManager {
     // Para processo existente se já estiver rodando
     await this.stopTask(companyId, projectId, taskType);
 
+    const rec = this.getOrCreateRecord(companyId, projectId, taskType, projectName);
+
     if (!path.isAbsolute(rootDir) || !fs.existsSync(rootDir)) {
-      return {
-        success: false,
-        status: "erro",
-        message: `Diretório do projeto não encontrado: ${rootDir}`,
-      };
+      return this.registrarFalhaDeExecucao(
+        companyId,
+        projectId,
+        taskType,
+        `Diretório do projeto não encontrado: ${rootDir}`,
+        projectName
+      );
     }
 
     let raizReal: string;
@@ -387,11 +446,13 @@ export class TaskProcessManager {
       raizReal = fs.realpathSync(rootDir);
       if (!fs.statSync(raizReal).isDirectory()) throw new Error("a raiz não é um diretório");
     } catch (err) {
-      return {
-        success: false,
-        status: "erro",
-        message: `Raiz do projeto inválida: ${err instanceof Error ? err.message : String(err)}`,
-      };
+      return this.registrarFalhaDeExecucao(
+        companyId,
+        projectId,
+        taskType,
+        `Raiz do projeto inválida: ${err instanceof Error ? err.message : String(err)}`,
+        projectName
+      );
     }
 
     // Leitura do .vscode/tasks.json se disponível
@@ -405,11 +466,13 @@ export class TaskProcessManager {
         }
         tasksJsonContent = fs.readFileSync(tasksJsonReal, "utf-8");
       } catch (err) {
-        return {
-          success: false,
-          status: "erro",
-          message: `Não foi possível ler tasks.json com segurança: ${err instanceof Error ? err.message : String(err)}`,
-        };
+        return this.registrarFalhaDeExecucao(
+          companyId,
+          projectId,
+          taskType,
+          `Não foi possível ler tasks.json com segurança: ${err instanceof Error ? err.message : String(err)}`,
+          projectName
+        );
       }
     }
 
@@ -417,31 +480,13 @@ export class TaskProcessManager {
     try {
       taskEfetiva.cwd = resolverDiretorioConfinado(raizReal, taskEfetiva.cwd);
     } catch (err) {
-      return {
-        success: false,
-        status: "erro",
-        message: err instanceof Error ? err.message : String(err),
-      };
-    }
-    const key = TaskProcessManager.key(companyId, projectId, taskType);
-
-    let rec = this.processes.get(key);
-    if (!rec) {
-      rec = {
+      return this.registrarFalhaDeExecucao(
         companyId,
         projectId,
-        projectName,
         taskType,
-        status: "parado",
-        logs: [],
-        logBytes: 0,
-        generation: 0,
-        stdoutRemainder: "",
-        stderrRemainder: "",
-        stdoutDecoder: new StringDecoder("utf8"),
-        stderrDecoder: new StringDecoder("utf8"),
-      };
-      this.processes.set(key, rec);
+        err instanceof Error ? err.message : String(err),
+        projectName
+      );
     }
 
     rec.userStopped = false;
@@ -607,7 +652,15 @@ export class TaskProcessManager {
     }
 
     if (action === "start") {
-      if (!rootDir) return { success: false, status: "erro", message: "raiz do projeto não informada" };
+      if (!rootDir) {
+        return this.registrarFalhaDeExecucao(
+          companyId,
+          projectId,
+          taskType,
+          "raiz do projeto não informada",
+          projectName
+        );
+      }
       return await this.startTask(companyId, projectId, rootDir, taskType, projectName);
     }
 
@@ -616,7 +669,15 @@ export class TaskProcessManager {
       await this.stopTask(companyId, projectId, taskType);
       return { success: true, status: "parado" };
     } else {
-      if (!rootDir) return { success: false, status: "erro", message: "raiz do projeto não informada" };
+      if (!rootDir) {
+        return this.registrarFalhaDeExecucao(
+          companyId,
+          projectId,
+          taskType,
+          "raiz do projeto não informada",
+          projectName
+        );
+      }
       return await this.startTask(companyId, projectId, rootDir, taskType, projectName);
     }
   }

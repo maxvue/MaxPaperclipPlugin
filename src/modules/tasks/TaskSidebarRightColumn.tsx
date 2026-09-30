@@ -494,12 +494,6 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
     async (projectId: string) => {
       if (!companyId) return;
       const current = sidebarStore.getSnapshot().runDevStates[projectId] ?? "parado";
-      if (
-        current !== "rodando" &&
-        !window.confirm(
-          "Esta ação executará a task RUN DEV definida pelo projeto local. Execute apenas projetos e arquivos .vscode/tasks.json confiáveis. Deseja continuar?",
-        )
-      ) return;
       sidebarStore.setRunDevStatus(projectId, current === "rodando" ? "parado" : "rodando");
       const result = await executeProjectTask(companyId, projectId, "dev");
       if (result?.status) {

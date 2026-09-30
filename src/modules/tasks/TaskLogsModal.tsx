@@ -22,6 +22,7 @@ export function TaskLogsModal({
 }: TaskLogsModalProps) {
   const [data, setData] = useState<TaskLogsResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const logsContainerRef = useRef<HTMLDivElement>(null);
@@ -36,9 +37,13 @@ export function TaskLogsModal({
         const result = await fetchTaskLogs(companyId, projectId, taskType);
         if (result) {
           setData(result);
+          setLoadError(null);
+        } else {
+          setLoadError("Não foi possível carregar os logs desta tarefa.");
         }
       } catch (err) {
         console.warn("Erro ao buscar logs da task:", err);
+        setLoadError("Não foi possível carregar os logs desta tarefa.");
       } finally {
         if (!silent) setLoading(false);
       }
@@ -231,6 +236,14 @@ export function TaskLogsModal({
                 </div>
               );
             })
+          ) : loadError ? (
+            <div className="flex flex-col items-center justify-center h-full text-rose-400 py-12 text-center">
+              <Terminal className="w-8 h-8 mb-2 opacity-60" />
+              <p>{loadError}</p>
+              <p className="text-[11px] text-zinc-500 mt-1">
+                Use o botão de atualizar para tentar novamente.
+              </p>
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-zinc-500 py-12">
               <Terminal className="w-8 h-8 mb-2 opacity-40" />
