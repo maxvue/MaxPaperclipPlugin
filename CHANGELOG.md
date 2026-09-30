@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-09-30
+
+### Added
+
+- Added an action to copy the conversation ID from each item in the chat session list, with visual confirmation.
+
+### Changed
+
+- Reordered the chat session hover metadata so action buttons appear before the date and time while keeping the timestamp visible.
+
 ## [1.1.7] - 2026-09-28
 
 ### Added
@@ -61,5 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented worker-only secrets from being inherited by repository-defined subprocesses.
 - Bounded the persistent Iconify cache by entry count and total size.
 
-[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.7...HEAD
+[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.8...HEAD
+[1.1.8]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/maxvue/MaxPaperclipPlugin/releases/tag/v1.1.7
