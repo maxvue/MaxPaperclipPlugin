@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.10] - 2026-09-30
+
+### Fixed
+
+- Corrigido o contrato do planejamento assistido para exigir perguntas e aprovações como interações nativas do Paperclip, em vez de comentários Markdown comuns.
+
 ## [1.1.9] - 2026-09-30
 
 ### Fixed
@@ -82,7 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented worker-only secrets from being inherited by repository-defined subprocesses.
 - Bounded the persistent Iconify cache by entry count and total size.
 
-[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.9...HEAD
+[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.10...HEAD
+[1.1.10]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.9...v1.1.10
 [1.1.9]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.8...v1.1.9
 [1.1.8]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/maxvue/MaxPaperclipPlugin/releases/tag/v1.1.7
