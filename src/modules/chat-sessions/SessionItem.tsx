@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { MessageSquare, Edit2, Check, X, Archive, ArchiveRestore, Trash2 } from "lucide-react";
+import { MessageSquare, Edit2, Check, X, Archive, ArchiveRestore, Trash2, Copy } from "lucide-react";
 import type { ChatSession } from "./types.js";
 
 interface SessionItemProps {
@@ -42,7 +42,9 @@ export function SessionItem({
 }: SessionItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(session.title);
+  const [copiedId, setCopiedId] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const copiedIdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -50,6 +52,12 @@ export function SessionItem({
       inputRef.current.select();
     }
   }, [isEditing]);
+
+  useEffect(() => {
+    return () => {
+      if (copiedIdTimeoutRef.current) clearTimeout(copiedIdTimeoutRef.current);
+    };
+  }, []);
 
   const handleSaveRename = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -62,6 +70,20 @@ export function SessionItem({
   const handleCancelRename = () => {
     setEditValue(session.title);
     setIsEditing(false);
+  };
+
+  const handleCopyConversationId = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    try {
+      await navigator.clipboard.writeText(session.issueId);
+      setCopiedId(true);
+      if (copiedIdTimeoutRef.current) clearTimeout(copiedIdTimeoutRef.current);
+      copiedIdTimeoutRef.current = setTimeout(() => setCopiedId(false), 2000);
+    } catch {
+      setCopiedId(false);
+    }
   };
 
   if (isEditing) {
@@ -129,11 +151,18 @@ export function SessionItem({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
-          <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap group-hover:hidden">
-            {formatRelativeTime(session.updatedAt || session.createdAt)}
-          </span>
-
           <div className="hidden group-hover:flex items-center gap-0.5">
+            {/* Botão de Copiar ID da Conversa */}
+            <button
+              type="button"
+              onClick={handleCopyConversationId}
+              title={copiedId ? "ID da conversa copiado" : "Copiar ID da conversa"}
+              aria-label={copiedId ? "ID da conversa copiado" : "Copiar ID da conversa"}
+              className="p-1 hover:text-foreground text-muted-foreground hover:bg-accent/60 rounded transition-colors cursor-pointer"
+            >
+              {copiedId ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+            </button>
+
             {/* Botão de Renomear */}
             <button
               type="button"
@@ -192,6 +221,10 @@ export function SessionItem({
               <Trash2 className="w-3 h-3" />
             </button>
           </div>
+
+          <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">
+            {formatRelativeTime(session.updatedAt || session.createdAt)}
+          </span>
         </div>
       </div>
 
