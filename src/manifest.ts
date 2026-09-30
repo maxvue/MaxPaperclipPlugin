@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 export const PLUGIN_ID = "max.paperclip-plugin";
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "1.1.7";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
@@ -14,7 +14,13 @@ const manifest: PaperclipPluginManifestV1 = {
   categories: ["ui", "automation"],
   capabilities: [
     "issues.read",
+    "issues.create",
+    "issues.update",
+    "issue.comments.read",
+    "issue.comments.create",
+    "issue.comments.create_human_attributed",
     "projects.read",
+    "project.workspaces.read",
     "agents.read",
     "plugin.state.read",
     "plugin.state.write",

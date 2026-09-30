@@ -11,9 +11,12 @@
 
 import { getSettings, subscribeSettings } from "../../config/settings.js";
 
-export type AutoSaveStatus = "idle" | "in_debounce" | "saved";
+export type AutoSaveStatus = "idle" | "in_debounce" | "requested" | "saved" | "error";
 
 type Listener = (status: AutoSaveStatus) => void;
+type DraftCommitResult = "confirmed" | "pending" | "none";
+
+const PERSISTENCE_TIMEOUT_MS = 10_000;
 
 interface FocusTargetSnapshot {
   element: HTMLElement;
@@ -39,6 +42,7 @@ class AutoSaveEngine {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private savedTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
+  private saveGeneration = 0;
 
   // Snapshot do elemento atualmente focado e cursor
   private currentFocusSnapshot: FocusTargetSnapshot | null = null;
@@ -202,6 +206,7 @@ class AutoSaveEngine {
     }
 
     this.updateFocusSnapshot();
+    this.saveGeneration += 1;
 
     // Se houver um timer de 2s ativo no verde, cancela imediatamente
     if (this.savedTimer) {
@@ -246,36 +251,53 @@ class AutoSaveEngine {
   /**
    * Confirma o rascunho de forma não-destrutiva sem forçar perda de foco
    */
-  private commitActiveDraft() {
-    const active = document.activeElement;
-    if (!(active instanceof HTMLElement) || !this.isEditableElement(active)) {
-      return;
+  private async commitActiveDraft(snapshot: FocusTargetSnapshot | null): Promise<DraftCommitResult> {
+    if (!snapshot) return "none";
+    const target = this.findSnapshotTarget(snapshot);
+    if (!target || !this.isEditableElement(target)) {
+      return "none";
     }
 
-    const isInputOrTextarea = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
-    const value = isInputOrTextarea ? (active as HTMLInputElement).value : active.textContent || "";
+    const isInputOrTextarea = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+    const value = isInputOrTextarea ? target.value : target.textContent || "";
 
     // 1. Caso InlineEditor: invoca onSave diretamente sem disparar blur (que destruiria o input)
-    const onSave = this.findFiberProp(active, "onSave");
+    const onSave = this.findFiberProp(target, "onSave");
     if (typeof onSave === "function") {
       try {
-        onSave(value);
-        return;
+        const completed = await this.waitForPersistence(onSave(value));
+        return completed ? "confirmed" : "pending";
       } catch {
         // Segue fallback
       }
     }
 
     // 2. Caso DraftInput: invoca onCommit diretamente sem acionar blur
-    const onCommit = this.findFiberProp(active, "onCommit");
-    const immediate = this.findFiberProp(active, "immediate");
+    const onCommit = this.findFiberProp(target, "onCommit");
+    const immediate = this.findFiberProp(target, "immediate");
     if (typeof onCommit === "function" && !immediate) {
       try {
-        onCommit(value);
-        return;
+        const completed = await this.waitForPersistence(onCommit(value));
+        return completed ? "confirmed" : "pending";
       } catch {
         // Segue fallback
       }
+    }
+    return "none";
+  }
+
+  private async waitForPersistence(result: unknown): Promise<boolean> {
+    if (!result || typeof (result as PromiseLike<unknown>).then !== "function") return true;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        Promise.resolve(result).then(() => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), PERSISTENCE_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
   }
 
@@ -376,30 +398,26 @@ class AutoSaveEngine {
     });
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
 
-    // Polling regular via requestAnimationFrame e intervalo curto para cobrir transições suaves
-    const interval = setInterval(restore, 25);
-    let rafId: number;
-    const rafLoop = () => {
-      if (!isGuarding) return;
-      restore();
-      rafId = requestAnimationFrame(rafLoop);
-    };
-    rafId = requestAnimationFrame(rafLoop);
-
-    const timer = setTimeout(() => {
-      cleanup();
-    }, durationMs);
+    restore();
 
     const cleanup = () => {
       isGuarding = false;
-      clearInterval(interval);
-      cancelAnimationFrame(rafId);
       clearTimeout(timer);
       observer.disconnect();
+      window.removeEventListener("pointerdown", abortOnUserNavigation, true);
+      window.removeEventListener("keydown", abortOnUserNavigation, true);
       if (this.activeGuardCleanup === cleanup) {
         this.activeGuardCleanup = null;
       }
     };
+
+    const abortOnUserNavigation = (event: Event) => {
+      const keyboardEvent = event instanceof KeyboardEvent ? event : null;
+      if (event.type === "pointerdown" || keyboardEvent?.key === "Tab") cleanup();
+    };
+    window.addEventListener("pointerdown", abortOnUserNavigation, true);
+    window.addEventListener("keydown", abortOnUserNavigation, true);
+    const timer = setTimeout(cleanup, durationMs);
 
     this.activeGuardCleanup = cleanup;
   }
@@ -407,8 +425,15 @@ class AutoSaveEngine {
   /**
    * Localiza e aciona o botão de salvar alterações no rodapé do Agente
    */
-  private triggerAgentFooterSave(): boolean {
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("footer button, div.agent-settings-form button, form button"));
+  private triggerScopedSave(snapshot: FocusTargetSnapshot): boolean {
+    const target = this.findSnapshotTarget(snapshot);
+    const form = target?.closest("form");
+    if (!form) return false;
+    const buttons = Array.from(
+      form.querySelectorAll<HTMLButtonElement>(
+        'button[type="submit"], button[data-testid*="save"], button[data-testid*="Save"]',
+      ),
+    );
     for (const btn of buttons) {
       const text = (btn.textContent || "").trim().toLowerCase();
       if (
@@ -438,37 +463,51 @@ class AutoSaveEngine {
     // 1. Atualiza e captura o snapshot do foco antes do salvamento
     this.updateFocusSnapshot();
     const snapshot = this.currentFocusSnapshot;
+    const generation = ++this.saveGeneration;
 
     // 2. Se houver elemento focado, ativa a guarda de foco e cursor contínua
     if (snapshot) {
       this.startFocusGuard(snapshot, 2500);
     }
 
-    // 3. Confirma o rascunho de forma não-destrutiva
-    this.commitActiveDraft();
+    // 3. Aguarda o callback de persistência quando ele expõe uma Promise.
+    setTimeout(() => void this.finishSave(snapshot, generation), 60);
+  }
 
-    // 4. Aguarda frame e aciona persistência no rodapé se aplicável
-    setTimeout(() => {
-      this.triggerAgentFooterSave();
+  private async finishSave(snapshot: FocusTargetSnapshot | null, generation: number): Promise<void> {
+    const draftCommit = await this.commitActiveDraft(snapshot);
+    if (generation !== this.saveGeneration) return;
+    const saveRequested = draftCommit === "none" && snapshot
+      ? this.triggerScopedSave(snapshot)
+      : false;
 
-      // 5. Define estado como 'saved' (Verde)
-      this.setStatus("saved");
+    // Um clique apenas solicita a gravação; somente callbacks concluídos confirmam sucesso.
+    this.setStatus(
+      draftCommit === "confirmed"
+        ? "saved"
+        : draftCommit === "pending" || saveRequested
+          ? "requested"
+          : "error",
+    );
 
-      // 6. Inicia contador de 2000ms no verde
-      if (this.savedTimer) {
-        clearTimeout(this.savedTimer);
+    // Retorna ao estado ocioso após exibir o resultado.
+    if (this.savedTimer) {
+      clearTimeout(this.savedTimer);
+    }
+    this.savedTimer = setTimeout(() => {
+      this.savedTimer = null;
+      if (
+        generation === this.saveGeneration &&
+        (this.status === "saved" || this.status === "requested" || this.status === "error")
+      ) {
+        this.setStatus("idle"); // Volta para o Azul
       }
-      this.savedTimer = setTimeout(() => {
-        this.savedTimer = null;
-        if (this.status === "saved") {
-          this.setStatus("idle"); // Volta para o Azul
-        }
-      }, 2000);
-    }, 60);
+    }, 2000);
   }
 
   private handleRouteChange = () => {
     if (!this.isEligibleRoute()) {
+      this.saveGeneration += 1;
       if (this.debounceTimer) {
         clearTimeout(this.debounceTimer);
         this.debounceTimer = null;
@@ -515,6 +554,7 @@ class AutoSaveEngine {
 
     subscribeSettings((settings) => {
       if (!settings.autosave) {
+        this.saveGeneration += 1;
         if (this.debounceTimer) {
           clearTimeout(this.debounceTimer);
           this.debounceTimer = null;
@@ -522,6 +562,10 @@ class AutoSaveEngine {
         if (this.savedTimer) {
           clearTimeout(this.savedTimer);
           this.savedTimer = null;
+        }
+        if (this.activeGuardCleanup) {
+          this.activeGuardCleanup();
+          this.activeGuardCleanup = null;
         }
         this.setStatus("idle");
       }

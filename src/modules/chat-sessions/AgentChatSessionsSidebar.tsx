@@ -7,6 +7,7 @@ import {
   fetchAgentChatContext,
   sendNewSessionCommand,
   applySessionVisibility,
+  getSessionDisplayIndex,
   monitorThreadVisibility,
   scrollToActiveSession,
   findChatLayoutContainer,
@@ -17,7 +18,7 @@ import {
   saveCustomTitle,
   archiveSession,
   unarchiveSession,
-  deleteSessionPermanently,
+  hideSessionLocally,
   activeChatSessionStore,
   type RawIssueComment,
 } from "./store.js";
@@ -179,6 +180,12 @@ export function AgentChatSessionsSidebar() {
   // Contagens
   const activeSessionsCount = useMemo(() => sessions.filter((s) => !s.isArchived).length, [sessions]);
   const archivedSessionsCount = useMemo(() => sessions.filter((s) => s.isArchived).length, [sessions]);
+  const sessionGenerations = useMemo(
+    () => [...messagesBySession.keys()]
+      .map((id) => Number(id.replace("session-gen-", "")))
+      .filter((generation) => Number.isInteger(generation)),
+    [messagesBySession],
+  );
 
   // Define a sessão ativa inicial se ainda não selecionada
   useEffect(() => {
@@ -201,14 +208,16 @@ export function AgentChatSessionsSidebar() {
     if (!activeSessionId) return;
     const session = sessions.find((s) => s.id === activeSessionId);
     if (session) {
-      return monitorThreadVisibility(session.generation, sessions.length);
+      const displayIndex = getSessionDisplayIndex(session.generation, sessionGenerations);
+      return monitorThreadVisibility(displayIndex, sessionGenerations.length);
     }
-  }, [activeSessionId, sessions]);
+  }, [activeSessionId, sessions, sessionGenerations]);
 
   // Manipulador de clique em uma sessão
   const handleSelectSession = (session: ChatSession) => {
     setActiveSessionId(session.id);
-    applySessionVisibility(session.generation, sessions.length);
+    const displayIndex = getSessionDisplayIndex(session.generation, sessionGenerations);
+    applySessionVisibility(displayIndex, sessionGenerations.length);
     requestAnimationFrame(() => {
       scrollToActiveSession();
     });
@@ -298,7 +307,7 @@ export function AgentChatSessionsSidebar() {
 
     try {
       const deletedId = sessionToDelete.id;
-      deleteSessionPermanently(companyId, routeInfo.agentRef, deletedId);
+      hideSessionLocally(companyId, routeInfo.agentRef, deletedId);
 
       // Se a sessão excluída for a ativa, seleciona a mais recente restante
       if (deletedId === activeSessionId) {

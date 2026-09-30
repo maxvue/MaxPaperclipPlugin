@@ -5,6 +5,8 @@
  */
 
 const STORAGE_KEY = "paperclip_iconify_cache";
+const MAX_CACHE_ENTRIES = 200;
+const MAX_CACHE_BYTES = 1024 * 1024;
 
 class IconifyCache {
   private memCache = new Map<string, string>();
@@ -29,6 +31,7 @@ class IconifyCache {
             this.memCache.set(k, v);
           }
         }
+        this.enforceLimits();
       }
     } catch (e) {
       console.warn("[Iconify Plugin] Falha ao carregar cache do localStorage:", e);
@@ -53,6 +56,19 @@ class IconifyCache {
     }, 500);
   }
 
+  private enforceLimits() {
+    let totalBytes = 0;
+    for (const [key, value] of this.memCache) {
+      totalBytes += key.length + value.length;
+    }
+    while (this.memCache.size > MAX_CACHE_ENTRIES || totalBytes > MAX_CACHE_BYTES) {
+      const oldest = this.memCache.entries().next().value as [string, string] | undefined;
+      if (!oldest) break;
+      this.memCache.delete(oldest[0]);
+      totalBytes -= oldest[0].length + oldest[1].length;
+    }
+  }
+
   public get(key: string): string | null {
     return this.memCache.get(key) ?? null;
   }
@@ -63,7 +79,14 @@ class IconifyCache {
 
   public set(key: string, svg: string): void {
     if (!svg || typeof svg !== "string") return;
+    this.memCache.delete(key);
     this.memCache.set(key, svg);
+    this.enforceLimits();
+    this.scheduleSave();
+  }
+
+  public delete(key: string): void {
+    this.memCache.delete(key);
     this.scheduleSave();
   }
 

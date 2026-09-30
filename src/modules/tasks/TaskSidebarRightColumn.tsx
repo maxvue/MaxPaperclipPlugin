@@ -78,6 +78,8 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
 
   const companyId = context?.companyId;
   const companyPrefix = context?.companyPrefix;
+  const activeCompanyRef = useRef(companyId);
+  activeCompanyRef.current = companyId;
 
   const [width, setWidth] = useState(readStoredWidth);
   const [isDragging, setIsDragging] = useState(false);
@@ -118,7 +120,7 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
     loading: false,
   });
 
-  const refreshData = async (silent = false) => {
+  const refreshData = useCallback(async (silent = false) => {
     if (!companyId) return;
     if (!silent) setLoading(true);
 
@@ -127,8 +129,10 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
         fetchCompanyTasks(companyId, true),
         fetchCompanyProjects(companyId),
         fetchCompanyLiveRuns(companyId),
-        fetchTaskStatuses(),
+        fetchTaskStatuses(companyId),
       ]);
+
+      if (activeCompanyRef.current !== companyId) return;
 
       setTasks(fetchedTasks);
       setProjects(fetchedProjects);
@@ -139,18 +143,26 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
     } catch (err) {
       console.warn("Erro ao atualizar dados do TaskSidebar:", err);
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && activeCompanyRef.current === companyId) setLoading(false);
     }
-  };
+  }, [companyId]);
 
   useEffect(() => {
     if (!companyId) return;
-    refreshData();
-    const interval = setInterval(() => {
-      refreshData(true);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [companyId]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const poll = async (silent: boolean) => {
+      await refreshData(silent);
+      if (!cancelled) timer = setTimeout(() => void poll(true), 5000);
+    };
+
+    void poll(false);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [companyId, refreshData]);
 
   const handleNewTask = useCallback((_projectId?: string) => {
     if (typeof document === "undefined") return;
@@ -481,12 +493,18 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
   // Execução de NPM RUN DEV e NPM RUN BUILD
   const handleToggleRunDev = useCallback(
     async (projectId: string) => {
+      if (!companyId) return;
       const proj = projectsById.get(projectId);
       const rootDir = proj ? extrairRaizDoProjeto(proj) || undefined : undefined;
       const current = sidebarStore.getSnapshot().runDevStates[projectId] ?? "parado";
+      if (
+        current !== "rodando" &&
+        !window.confirm(
+          "Esta ação executará a task RUN DEV definida pelo projeto local. Execute apenas projetos e arquivos .vscode/tasks.json confiáveis. Deseja continuar?",
+        )
+      ) return;
       sidebarStore.setRunDevStatus(projectId, current === "rodando" ? "parado" : "rodando");
-      const result = await executeProjectTask(projectId, "dev", "toggle", {
-        companyId: companyId || undefined,
+      const result = await executeProjectTask(companyId, projectId, "dev", "toggle", {
         rootDir,
         projectName: proj?.name,
       });
@@ -494,17 +512,23 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
         sidebarStore.setRunDevStatus(projectId, result.status);
       }
     },
-    [projectsById, companyId],
+    [companyId, projectsById],
   );
 
   const handleToggleRunBuild = useCallback(
     async (projectId: string) => {
+      if (!companyId) return;
       const proj = projectsById.get(projectId);
       const rootDir = proj ? extrairRaizDoProjeto(proj) || undefined : undefined;
       const current = sidebarStore.getSnapshot().runBuildStates[projectId] ?? "parado";
+      if (
+        current !== "rodando" &&
+        !window.confirm(
+          "Esta ação executará a task RUN BUILD definida pelo projeto local. Execute apenas projetos e arquivos .vscode/tasks.json confiáveis. Deseja continuar?",
+        )
+      ) return;
       sidebarStore.setRunBuildStatus(projectId, current === "rodando" ? "parado" : "rodando");
-      const result = await executeProjectTask(projectId, "build", "toggle", {
-        companyId: companyId || undefined,
+      const result = await executeProjectTask(companyId, projectId, "build", "toggle", {
         rootDir,
         projectName: proj?.name,
       });
@@ -512,7 +536,7 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
         sidebarStore.setRunBuildStatus(projectId, result.status);
       }
     },
-    [projectsById, companyId],
+    [companyId, projectsById],
   );
 
   // Abertura do modal de exclusão
@@ -1320,6 +1344,7 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
       {logsModalTarget && (
         <TaskLogsModal
           open={Boolean(logsModalTarget)}
+          companyId={companyId!}
           projectId={logsModalTarget.projectId}
           projectName={logsModalTarget.projectName}
           taskType={logsModalTarget.taskType}

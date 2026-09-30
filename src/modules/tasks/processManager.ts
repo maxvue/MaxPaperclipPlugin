@@ -7,6 +7,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
   resolverTaskEfetiva,
   type TipoDeTask,
@@ -14,25 +15,85 @@ import {
 } from "./tasksJson.js";
 
 const MAX_LOG_LINES = 200;
+const MAX_LOG_BYTES = 256 * 1024;
+const MAX_LOG_LINE_BYTES = 16 * 1024;
+const SAFE_INHERITED_ENV_KEYS = new Set([
+  "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "COMSPEC",
+  "TMP", "TEMP", "TMPDIR", "LANG", "LC_ALL", "TERM", "COLORTERM", "CI",
+  "HOME", "USERPROFILE", "USER", "LOGNAME", "SHELL", "APPDATA", "LOCALAPPDATA",
+  "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
+]);
+
+export function criarAmbienteTask(overrides?: Record<string, string>): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_INHERITED_ENV_KEYS) {
+    if (process.env[key] !== undefined) environment[key] = process.env[key];
+  }
+  return { ...environment, ...(overrides ?? {}) };
+}
+
+function quoteShellArgument(argument: string): string {
+  if (process.platform === "win32") {
+    if (/^[A-Za-z0-9_./:\\=-]+$/.test(argument)) return argument;
+    return `"${argument.replace(/(\\*)"/g, "$1$1\\\"").replace(/(\\+)$/, "$1$1")}"`;
+  }
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(argument)) return argument;
+  return `'${argument.replace(/'/g, `'"'"'`)}'`;
+}
+
+export function montarComandoShell(command: string, args: string[] = []): string {
+  const executable = /[\\/]/.test(command) && /\s/.test(command)
+    ? quoteShellArgument(command)
+    : command;
+  return [executable, ...args.map(quoteShellArgument)].join(" ");
+}
+
+function caminhoEstaDentroDaRaiz(raiz: string, candidato: string): boolean {
+  const relativo = path.relative(raiz, candidato);
+  return relativo === "" || (!relativo.startsWith("..") && !path.isAbsolute(relativo));
+}
+
+function resolverDiretorioConfinado(raiz: string, candidato: string): string {
+  const resolvido = fs.realpathSync(candidato);
+  if (!caminhoEstaDentroDaRaiz(raiz, resolvido)) {
+    throw new Error(`Diretório fora da raiz autorizada do projeto: ${candidato}`);
+  }
+  return resolvido;
+}
+
+function ocultarSegredos(texto: string): string {
+  return texto
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+=*/gi, "$1[REDACTED]")
+    .replace(/\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY))=([^\s]+)/gi, "$1=[REDACTED]");
+}
 
 export interface ProcessRecord {
+  companyId: string;
   projectId: string;
   projectName?: string;
   taskType: TipoDeTask;
   status: StatusDeTask;
   pid?: number;
+  processGroupPid?: number;
   child?: ChildProcess;
   startedAt?: string;
   stoppedAt?: string;
   exitCode?: number | null;
   userStopped?: boolean;
   logs: string[];
+  logBytes: number;
+  generation: number;
+  stdoutRemainder: string;
+  stderrRemainder: string;
+  stdoutDecoder: StringDecoder;
+  stderrDecoder: StringDecoder;
 }
 
 export interface ExecuteTaskParams {
+  companyId: string;
   projectId: string;
   projectName?: string;
-  rootDir: string;
+  rootDir?: string;
   taskType: TipoDeTask;
   action?: "start" | "stop" | "toggle";
 }
@@ -46,9 +107,11 @@ export interface ExecuteTaskResult {
 
 export class TaskProcessManager {
   private processes = new Map<string, ProcessRecord>();
+  private operations = new Map<string, Promise<ExecuteTaskResult>>();
+  private shuttingDown = false;
 
-  private static key(projectId: string, taskType: TipoDeTask): string {
-    return `${projectId}:${taskType}`;
+  private static key(companyId: string, projectId: string, taskType: TipoDeTask): string {
+    return `${companyId}:${projectId}:${taskType}`;
   }
 
   private formatTimestamp(): string {
@@ -58,33 +121,100 @@ export class TaskProcessManager {
   }
 
   private appendLog(record: ProcessRecord, line: string): void {
-    const formatted = `[${this.formatTimestamp()}] ${line}`;
+    const seguro = ocultarSegredos(line);
+    const buffer = Buffer.from(seguro, "utf-8");
+    const limitado =
+      buffer.byteLength > MAX_LOG_LINE_BYTES
+        ? `${buffer.subarray(0, MAX_LOG_LINE_BYTES).toString("utf-8")}… [linha truncada]`
+        : seguro;
+    const formatted = `[${this.formatTimestamp()}] ${limitado}`;
     record.logs.push(formatted);
-    if (record.logs.length > MAX_LOG_LINES) {
-      record.logs.shift();
+    record.logBytes += Buffer.byteLength(formatted, "utf-8");
+    while (record.logs.length > MAX_LOG_LINES || record.logBytes > MAX_LOG_BYTES) {
+      const removida = record.logs.shift();
+      if (!removida) break;
+      record.logBytes -= Buffer.byteLength(removida, "utf-8");
     }
   }
 
-  private appendChunk(record: ProcessRecord, chunk: string | Buffer): void {
-    const text = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+  private appendChunk(record: ProcessRecord, chunk: string | Buffer, stream: "stdout" | "stderr"): void {
+    const remainderKey = stream === "stdout" ? "stdoutRemainder" : "stderrRemainder";
+    const decoder = stream === "stdout" ? record.stdoutDecoder : record.stderrDecoder;
+    const decoded = typeof chunk === "string" ? chunk : decoder.write(chunk);
+    const text = record[remainderKey] + decoded;
     const lines = text.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // Ignora última linha vazia resultante de quebra no final do chunk
-      if (i === lines.length - 1 && line.trim() === "") continue;
-      this.appendLog(record, line);
+    record[remainderKey] = lines.pop() ?? "";
+    for (const line of lines) this.appendLog(record, line);
+
+    // Evita crescimento ilimitado quando o processo nunca emite uma quebra de linha.
+    if (Buffer.byteLength(record[remainderKey], "utf-8") > MAX_LOG_BYTES) {
+      this.appendLog(record, record[remainderKey]);
+      record[remainderKey] = "";
     }
   }
 
-  getProcessRecord(projectId: string, taskType: TipoDeTask): ProcessRecord | undefined {
-    return this.processes.get(TaskProcessManager.key(projectId, taskType));
+  private flushRemainders(record: ProcessRecord): void {
+    record.stdoutRemainder += record.stdoutDecoder.end();
+    record.stderrRemainder += record.stderrDecoder.end();
+    if (record.stdoutRemainder) this.appendLog(record, record.stdoutRemainder);
+    if (record.stderrRemainder) this.appendLog(record, record.stderrRemainder);
+    record.stdoutRemainder = "";
+    record.stderrRemainder = "";
+  }
+
+  private watchProcessGroupExit(record: ProcessRecord, generation: number, processGroupPid: number): void {
+    const reaper = setInterval(() => {
+      if (
+        record.generation !== generation ||
+        record.userStopped ||
+        record.processGroupPid !== processGroupPid
+      ) {
+        clearInterval(reaper);
+        return;
+      }
+      if (this.processGroupIsAlive(processGroupPid)) return;
+      clearInterval(reaper);
+      record.status = "parado";
+      record.pid = undefined;
+      record.processGroupPid = undefined;
+      record.stoppedAt = new Date().toISOString();
+      this.appendLog(record, "[MaxPaperclipPlugin] Todos os processos descendentes foram finalizados.");
+    }, 250);
+    reaper.unref?.();
+  }
+
+  private processGroupIsAlive(pid: number): boolean {
+    if (process.platform === "win32") return false;
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async terminateWindowsTree(pid: number): Promise<void> {
+    if (process.platform !== "win32") return;
+    await new Promise<void>((resolve) => {
+      const killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      killer.once("error", () => resolve());
+      killer.once("close", () => resolve());
+    });
+  }
+
+  getProcessRecord(companyId: string, projectId: string, taskType: TipoDeTask): ProcessRecord | undefined {
+    return this.processes.get(TaskProcessManager.key(companyId, projectId, taskType));
   }
 
   getProcessStatus(
+    companyId: string,
     projectId: string,
     taskType: TipoDeTask
   ): { status: StatusDeTask; pid?: number; startedAt?: string; exitCode?: number | null } {
-    const rec = this.getProcessRecord(projectId, taskType);
+    const rec = this.getProcessRecord(companyId, projectId, taskType);
     if (!rec) {
       return { status: "parado", exitCode: null };
     }
@@ -96,7 +226,7 @@ export class TaskProcessManager {
     };
   }
 
-  getAllStatuses(): Record<
+  getAllStatuses(companyId: string): Record<
     string,
     { status: StatusDeTask; pid?: number; startedAt?: string; exitCode?: number | null }
   > {
@@ -104,8 +234,9 @@ export class TaskProcessManager {
       string,
       { status: StatusDeTask; pid?: number; startedAt?: string; exitCode?: number | null }
     > = {};
-    for (const [k, rec] of this.processes.entries()) {
-      result[k] = {
+    for (const rec of this.processes.values()) {
+      if (rec.companyId !== companyId) continue;
+      result[`${rec.projectId}:${rec.taskType}`] = {
         status: rec.status,
         pid: rec.pid,
         startedAt: rec.startedAt,
@@ -116,6 +247,7 @@ export class TaskProcessManager {
   }
 
   getLogs(
+    companyId: string,
     projectId: string,
     taskType: TipoDeTask
   ): {
@@ -126,7 +258,7 @@ export class TaskProcessManager {
     pid?: number;
     startedAt?: string;
   } {
-    const rec = this.getProcessRecord(projectId, taskType);
+    const rec = this.getProcessRecord(companyId, projectId, taskType);
     if (!rec) {
       return {
         projectId,
@@ -145,16 +277,19 @@ export class TaskProcessManager {
     };
   }
 
-  clearLogs(projectId: string, taskType: TipoDeTask): void {
-    const rec = this.getProcessRecord(projectId, taskType);
+  clearLogs(companyId: string, projectId: string, taskType: TipoDeTask): void {
+    const rec = this.getProcessRecord(companyId, projectId, taskType);
     if (rec) {
       rec.logs = [];
+      rec.logBytes = 0;
     }
   }
 
-  async stopTask(projectId: string, taskType: TipoDeTask): Promise<boolean> {
-    const rec = this.getProcessRecord(projectId, taskType);
-    if (!rec || !rec.child || rec.status !== "rodando") {
+  async stopTask(companyId: string, projectId: string, taskType: TipoDeTask): Promise<boolean> {
+    const rec = this.getProcessRecord(companyId, projectId, taskType);
+    const child = rec?.child;
+    const processGroupPid = rec?.processGroupPid ?? child?.pid;
+    if (!rec || rec.status !== "rodando" || (!child && !processGroupPid)) {
       if (rec) {
         rec.status = "parado";
       }
@@ -164,14 +299,17 @@ export class TaskProcessManager {
     rec.userStopped = true;
     this.appendLog(rec, `[MaxPaperclipPlugin] Solicitando parada do processo (PID ${rec.pid})...`);
 
-    const child = rec.child;
     try {
-      if (child.pid) {
-        // Envia SIGTERM para o grupo do processo ou processo
-        try {
-          process.kill(-child.pid, "SIGTERM");
-        } catch {
-          child.kill("SIGTERM");
+      if (processGroupPid) {
+        if (process.platform === "win32") {
+          await this.terminateWindowsTree(processGroupPid);
+        } else {
+          // Envia SIGTERM para o grupo do processo ou processo
+          try {
+            process.kill(-processGroupPid, "SIGTERM");
+          } catch {
+            child?.kill("SIGTERM");
+          }
         }
       }
     } catch {
@@ -181,46 +319,62 @@ export class TaskProcessManager {
     // Aguarda até 2s para encerramento gracioso antes de SIGKILL
     await new Promise<void>((resolve) => {
       let resolved = false;
+      const poll = setInterval(() => {
+        if (process.platform !== "win32" && processGroupPid && !this.processGroupIsAlive(processGroupPid)) {
+          finish();
+        }
+      }, 50);
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        clearInterval(poll);
+        resolve();
+      };
       const timer = setTimeout(() => {
-        if (!resolved && rec.status === "rodando" && child.pid) {
+        if (
+          !resolved &&
+          processGroupPid &&
+          (process.platform === "win32" || this.processGroupIsAlive(processGroupPid))
+        ) {
           try {
-            process.kill(-child.pid, "SIGKILL");
+            process.kill(-processGroupPid, "SIGKILL");
           } catch {
             try {
-              child.kill("SIGKILL");
+              child?.kill("SIGKILL");
             } catch {
               // ignora
             }
           }
         }
-        resolved = true;
-        resolve();
+        finish();
       }, 2000);
 
-      child.once("exit", () => {
-        if (!resolved) {
-          clearTimeout(timer);
-          resolved = true;
-          resolve();
-        }
+      child?.once("exit", () => {
+        if (process.platform === "win32" || !processGroupPid || !this.processGroupIsAlive(processGroupPid)) finish();
       });
     });
 
+    this.flushRemainders(rec);
     rec.status = "parado";
+    rec.pid = undefined;
+    rec.processGroupPid = undefined;
+    rec.child = undefined;
     rec.stoppedAt = new Date().toISOString();
     return true;
   }
 
   async startTask(
+    companyId: string,
     projectId: string,
     rootDir: string,
     taskType: TipoDeTask,
     projectName?: string
   ): Promise<ExecuteTaskResult> {
     // Para processo existente se já estiver rodando
-    await this.stopTask(projectId, taskType);
+    await this.stopTask(companyId, projectId, taskType);
 
-    if (!fs.existsSync(rootDir)) {
+    if (!path.isAbsolute(rootDir) || !fs.existsSync(rootDir)) {
       return {
         success: false,
         status: "erro",
@@ -228,33 +382,75 @@ export class TaskProcessManager {
       };
     }
 
+    let raizReal: string;
+    try {
+      raizReal = fs.realpathSync(rootDir);
+      if (!fs.statSync(raizReal).isDirectory()) throw new Error("a raiz não é um diretório");
+    } catch (err) {
+      return {
+        success: false,
+        status: "erro",
+        message: `Raiz do projeto inválida: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
     // Leitura do .vscode/tasks.json se disponível
     let tasksJsonContent: string | null = null;
-    const tasksJsonPath = path.join(rootDir, ".vscode", "tasks.json");
+    const tasksJsonPath = path.join(raizReal, ".vscode", "tasks.json");
     if (fs.existsSync(tasksJsonPath)) {
       try {
-        tasksJsonContent = fs.readFileSync(tasksJsonPath, "utf-8");
+        const tasksJsonReal = fs.realpathSync(tasksJsonPath);
+        if (!caminhoEstaDentroDaRaiz(raizReal, tasksJsonReal)) {
+          throw new Error("tasks.json aponta para fora da raiz autorizada");
+        }
+        tasksJsonContent = fs.readFileSync(tasksJsonReal, "utf-8");
       } catch (err) {
-        // Ignora erro de leitura
+        return {
+          success: false,
+          status: "erro",
+          message: `Não foi possível ler tasks.json com segurança: ${err instanceof Error ? err.message : String(err)}`,
+        };
       }
     }
 
-    const taskEfetiva = resolverTaskEfetiva(tasksJsonContent, rootDir, taskType);
-    const key = TaskProcessManager.key(projectId, taskType);
+    const taskEfetiva = resolverTaskEfetiva(tasksJsonContent, raizReal, taskType);
+    try {
+      taskEfetiva.cwd = resolverDiretorioConfinado(raizReal, taskEfetiva.cwd);
+    } catch (err) {
+      return {
+        success: false,
+        status: "erro",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+    const key = TaskProcessManager.key(companyId, projectId, taskType);
 
     let rec = this.processes.get(key);
     if (!rec) {
       rec = {
+        companyId,
         projectId,
         projectName,
         taskType,
         status: "parado",
         logs: [],
+        logBytes: 0,
+        generation: 0,
+        stdoutRemainder: "",
+        stderrRemainder: "",
+        stdoutDecoder: new StringDecoder("utf8"),
+        stderrDecoder: new StringDecoder("utf8"),
       };
       this.processes.set(key, rec);
     }
 
     rec.userStopped = false;
+    rec.stdoutRemainder = "";
+    rec.stderrRemainder = "";
+    rec.stdoutDecoder = new StringDecoder("utf8");
+    rec.stderrDecoder = new StringDecoder("utf8");
+    rec.generation += 1;
+    const generation = rec.generation;
     rec.exitCode = null;
     rec.startedAt = new Date().toISOString();
     rec.stoppedAt = undefined;
@@ -265,14 +461,12 @@ export class TaskProcessManager {
     );
     this.appendLog(
       rec,
-      `[MaxPaperclipPlugin] Comando: ${taskEfetiva.command}${
-        taskEfetiva.args && taskEfetiva.args.length > 0 ? " " + taskEfetiva.args.join(" ") : ""
-      }`
+      `[MaxPaperclipPlugin] Comando configurado (${taskEfetiva.args?.length ?? 0} argumento(s)); conteúdo omitido dos logs.`
     );
 
     let child: ChildProcess;
     try {
-      const env = { ...process.env, ...(taskEfetiva.env ?? {}) };
+      const env = criarAmbienteTask(taskEfetiva.env);
 
       if (taskEfetiva.tipo === "process") {
         child = spawn(taskEfetiva.command, taskEfetiva.args ?? [], {
@@ -285,7 +479,7 @@ export class TaskProcessManager {
       } else {
         if (taskEfetiva.shellExecutable) {
           const shellArgs = taskEfetiva.shellArgs ?? ["-c"];
-          const fullCmd = [taskEfetiva.command, ...(taskEfetiva.args ?? [])].join(" ");
+          const fullCmd = montarComandoShell(taskEfetiva.command, taskEfetiva.args);
           child = spawn(taskEfetiva.shellExecutable, [...shellArgs, fullCmd], {
             cwd: taskEfetiva.cwd,
             env,
@@ -294,7 +488,7 @@ export class TaskProcessManager {
             stdio: ["ignore", "pipe", "pipe"],
           });
         } else {
-          const fullCmd = [taskEfetiva.command, ...(taskEfetiva.args ?? [])].join(" ");
+          const fullCmd = montarComandoShell(taskEfetiva.command, taskEfetiva.args);
           child = spawn(fullCmd, {
             cwd: taskEfetiva.cwd,
             env,
@@ -316,28 +510,60 @@ export class TaskProcessManager {
     }
 
     rec.child = child;
-    rec.pid = child.pid;
-    rec.status = "rodando";
 
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      rec.status = "erro";
+      rec.child = undefined;
+      this.appendLog(rec, `[MaxPaperclipPlugin] Erro ao iniciar processo: ${message}`);
+      return { success: false, status: "erro", message };
+    }
+
+    rec.pid = child.pid;
+    rec.processGroupPid = child.pid;
+    rec.status = "rodando";
     this.appendLog(rec, `[MaxPaperclipPlugin] Processo iniciado com PID ${child.pid}`);
 
     child.stdout?.on("data", (data) => {
-      this.appendChunk(rec!, data);
+      this.appendChunk(rec!, data, "stdout");
     });
 
     child.stderr?.on("data", (data) => {
-      this.appendChunk(rec!, data);
+      this.appendChunk(rec!, data, "stderr");
     });
 
     child.on("error", (err) => {
+      if (rec!.generation !== generation) return;
+      this.flushRemainders(rec!);
       rec!.status = "erro";
       this.appendLog(rec!, `[MaxPaperclipPlugin] Erro no processo: ${err.message}`);
     });
 
     child.on("exit", (code, signal) => {
-      rec!.pid = undefined;
+      if (rec!.generation !== generation) return;
+      this.flushRemainders(rec!);
+      rec!.child = undefined;
       rec!.exitCode = code;
       rec!.stoppedAt = new Date().toISOString();
+
+      if (
+        !rec!.userStopped &&
+        rec!.processGroupPid &&
+        this.processGroupIsAlive(rec!.processGroupPid)
+      ) {
+        rec!.status = "rodando";
+        this.appendLog(rec!, "[MaxPaperclipPlugin] Processo principal finalizado; aguardando processos descendentes.");
+        this.watchProcessGroupExit(rec!, generation, rec!.processGroupPid);
+        return;
+      }
+
+      rec!.pid = undefined;
+      rec!.processGroupPid = undefined;
 
       const finalStatus: StatusDeTask =
         rec!.userStopped || code === 0 || signal === "SIGTERM" ? "parado" : "erro";
@@ -357,44 +583,53 @@ export class TaskProcessManager {
   }
 
   async executeTask(params: ExecuteTaskParams): Promise<ExecuteTaskResult> {
-    const { projectId, rootDir, taskType, action = "toggle", projectName } = params;
-    const currentStatus = this.getProcessStatus(projectId, taskType).status;
+    if (this.shuttingDown) {
+      return { success: false, status: "erro", message: "gerenciador de processos em encerramento" };
+    }
+    const key = TaskProcessManager.key(params.companyId, params.projectId, params.taskType);
+    const anterior = this.operations.get(key) ?? Promise.resolve({ success: true, status: "parado" as const });
+    const atual = anterior.catch(() => ({ success: false, status: "erro" as const })).then(() => this.executeTaskSerializada(params));
+    this.operations.set(key, atual);
+    try {
+      return await atual;
+    } finally {
+      if (this.operations.get(key) === atual) this.operations.delete(key);
+    }
+  }
+
+  private async executeTaskSerializada(params: ExecuteTaskParams): Promise<ExecuteTaskResult> {
+    const { companyId, projectId, rootDir, taskType, action = "toggle", projectName } = params;
+    const currentStatus = this.getProcessStatus(companyId, projectId, taskType).status;
 
     if (action === "stop") {
-      await this.stopTask(projectId, taskType);
+      await this.stopTask(companyId, projectId, taskType);
       return { success: true, status: "parado" };
     }
 
     if (action === "start") {
-      return await this.startTask(projectId, rootDir, taskType, projectName);
+      if (!rootDir) return { success: false, status: "erro", message: "raiz do projeto não informada" };
+      return await this.startTask(companyId, projectId, rootDir, taskType, projectName);
     }
 
     // Toggle
     if (currentStatus === "rodando") {
-      await this.stopTask(projectId, taskType);
+      await this.stopTask(companyId, projectId, taskType);
       return { success: true, status: "parado" };
     } else {
-      return await this.startTask(projectId, rootDir, taskType, projectName);
+      if (!rootDir) return { success: false, status: "erro", message: "raiz do projeto não informada" };
+      return await this.startTask(companyId, projectId, rootDir, taskType, projectName);
     }
   }
 
   async stopAll(): Promise<void> {
-    for (const [_, rec] of this.processes.entries()) {
-      if (rec.status === "rodando" && rec.child) {
-        try {
-          if (rec.pid) {
-            process.kill(-rec.pid, "SIGTERM");
-          }
-        } catch {
-          try {
-            rec.child.kill("SIGTERM");
-          } catch {
-            // ignora
-          }
-        }
-        rec.status = "parado";
-      }
-    }
+    this.shuttingDown = true;
+    await Promise.allSettled([...this.operations.values()]);
+    const running = [...this.processes.values()].filter(
+      (rec) => rec.child || rec.processGroupPid,
+    );
+    await Promise.all(
+      running.map((rec) => this.stopTask(rec.companyId, rec.projectId, rec.taskType)),
+    );
   }
 }
 

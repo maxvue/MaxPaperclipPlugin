@@ -65,12 +65,12 @@ export function SessionDeleteConfirmModal({
 
           <div className="min-w-0 flex-1">
             <h3 id="delete-session-modal-title" className="text-sm font-semibold leading-6 text-foreground">
-              Remover conversa definitivamente?
+              Ocultar conversa neste navegador?
             </h3>
 
             <div className="mt-2 text-xs leading-relaxed text-muted-foreground space-y-1.5">
               <p>
-                Tem certeza de que deseja remover permanentemente a conversa{" "}
+                Tem certeza de que deseja ocultar a conversa{" "}
                 <strong className="text-foreground">"{session.title}"</strong>?
               </p>
               {session.messagesCount > 0 && (
@@ -80,7 +80,7 @@ export function SessionDeleteConfirmModal({
                 </p>
               )}
               <p className="text-rose-500/90 dark:text-rose-400/90 text-[11px] font-medium pt-1">
-                Esta ação removerá a conversa definitivamente da sua lista.
+                As mensagens continuarão no servidor e podem reaparecer em outro navegador ou após limpar os dados locais.
               </p>
             </div>
           </div>
@@ -104,7 +104,7 @@ export function SessionDeleteConfirmModal({
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-rose-600 hover:bg-rose-700 text-white transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>Remover Definitivamente</span>
+            <span>Ocultar neste navegador</span>
           </button>
         </div>
       </div>

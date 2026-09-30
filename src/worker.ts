@@ -2,11 +2,10 @@ import { definePlugin, runWorker, type PluginContext } from "@paperclipai/plugin
 import {
   buildProjectPlanningConfig,
   isPlanningLeaderEligible,
-  PLANNING_LEADER_IDS,
   type ProjectPlanningConfig,
 } from "./planning-config.js";
 import { taskProcessManager } from "./modules/tasks/processManager.js";
-import type { TipoDeTask } from "./modules/tasks/tasksJson.js";
+import { extrairRaizDoProjeto, type TipoDeTask } from "./modules/tasks/tasksJson.js";
 
 export const PLUGIN_ID = "max.paperclip-plugin";
 
@@ -21,6 +20,27 @@ function requiredString(params: Record<string, unknown>, key: string): string {
   return value.trim();
 }
 
+function requiredCompanyId(companyId: string | null): string {
+  if (!companyId) throw new Error("empresa ativa não identificada");
+  return companyId;
+}
+
+function requiredTaskType(params: Record<string, unknown>): TipoDeTask {
+  const rawTaskType = requiredString(params, "taskType");
+  if (rawTaskType !== "dev" && rawTaskType !== "build") {
+    throw new Error("taskType inválido (deve ser 'dev' ou 'build')");
+  }
+  return rawTaskType;
+}
+
+function requiredTaskAction(params: Record<string, unknown>): "start" | "stop" | "toggle" {
+  const action = typeof params.action === "string" ? params.action : "toggle";
+  if (action !== "start" && action !== "stop" && action !== "toggle") {
+    throw new Error("action inválida (deve ser 'start', 'stop' ou 'toggle')");
+  }
+  return action;
+}
+
 function planningStateKey(projectId: string) {
   return {
     scopeKind: "project" as const,
@@ -28,26 +48,6 @@ function planningStateKey(projectId: string) {
     namespace: PLANNING_NAMESPACE,
     stateKey: PLANNING_CONFIG_KEY,
   };
-}
-
-export function extrairRaizDoProjeto(project: unknown): string | null {
-  if (!project || typeof project !== "object") return null;
-  const p = project as Record<string, unknown>;
-  const codebase = p.codebase as Record<string, unknown> | undefined;
-  const primaryWorkspace = p.primaryWorkspace as Record<string, unknown> | undefined;
-  const workspaces = Array.isArray(p.workspaces) ? p.workspaces : [];
-
-  const candidate =
-    (typeof codebase?.effectiveLocalFolder === "string" && codebase.effectiveLocalFolder) ||
-    (typeof codebase?.localFolder === "string" && codebase.localFolder) ||
-    (typeof primaryWorkspace?.cwd === "string" && primaryWorkspace.cwd) ||
-    (workspaces.length > 0 &&
-      typeof (workspaces[0] as Record<string, unknown>)?.cwd === "string" &&
-      ((workspaces[0] as Record<string, unknown>).cwd as string)) ||
-    null;
-
-  if (!candidate || typeof candidate !== "string") return null;
-  return candidate.replace(/[/\\]+$/, "");
 }
 
 const plugin = definePlugin({
@@ -94,10 +94,7 @@ const plugin = definePlugin({
       if (!project) throw new Error("projeto não encontrado na empresa ativa");
       const agents = await ctx.agents.list({ companyId, limit: 500, offset: 0 });
       const selected = agents.find((agent) => agent.id === planningAgentId);
-      if (!selected || !PLANNING_LEADER_IDS.has(selected.id)) {
-        throw new Error("o agente de planejamento deve ser um dos líderes habilitados");
-      }
-      if (!isPlanningLeaderEligible(selected)) {
+      if (!selected || !isPlanningLeaderEligible(selected)) {
         throw new Error("o agente de planejamento precisa estar em estado invocável");
       }
 
@@ -110,79 +107,26 @@ const plugin = definePlugin({
     // Task Manager Actions & Data (Execução de tasks .vscode estilo MaxCode)
     // -------------------------------------------------------------
     ctx.actions.register("task-manager:execute", async (params, actionContext) => {
-      let companyId =
-        (typeof params.companyId === "string" && params.companyId.trim()) ||
-        actionContext.companyId;
-      const projectId = requiredString(params, "projectId");
-      const rawTaskType = requiredString(params, "taskType");
-      if (rawTaskType !== "dev" && rawTaskType !== "build") {
-        throw new Error("taskType inválido (deve ser 'dev' ou 'build')");
-      }
-      const taskType = rawTaskType as TipoDeTask;
-      const action =
-        typeof params.action === "string"
-          ? (params.action as "start" | "stop" | "toggle")
-          : "toggle";
+      const companyId = requiredCompanyId(actionContext.companyId);
+      const projectId = requiredString(params, 'projectId');
+      const taskType = requiredTaskType(params);
+      const action = requiredTaskAction(params);
 
-      let rootDir = typeof params.rootDir === "string" ? params.rootDir.trim() : "";
-      let projectName: string | undefined =
-        typeof params.projectName === "string" && params.projectName.trim()
-          ? params.projectName.trim()
-          : undefined;
-
-      // 1. Tenta buscar direto se já temos companyId
-      if (!rootDir && companyId) {
-        try {
-          const project = await ctx.projects.get(projectId, companyId);
-          if (project) {
-            if (!projectName) projectName = (project as unknown as { name?: string }).name;
-            const extracted = extrairRaizDoProjeto(project);
-            if (extracted) rootDir = extracted;
-          }
-        } catch {
-          // ignora
-        }
+      const project = await ctx.projects.get(projectId, companyId);
+      if (!project) throw new Error('projeto não encontrado na empresa ativa');
+      const projectName = project.name;
+      const currentStatus = taskProcessManager.getProcessStatus(companyId, projectId, taskType).status;
+      if (action === 'stop' || (action === 'toggle' && currentStatus === 'rodando')) {
+        return await taskProcessManager.executeTask({
+          companyId,
+          projectId,
+          projectName,
+          taskType,
+          action,
+        });
       }
-
-      // 2. Tenta listar projetos da empresa se ainda não encontrou a raiz
-      if (!rootDir && companyId) {
-        try {
-          const allProjects = await ctx.projects.list({ companyId, limit: 500 });
-          const p = allProjects.find((x) => x.id === projectId);
-          if (p) {
-            if (!projectName) projectName = (p as unknown as { name?: string }).name;
-            const extracted = extrairRaizDoProjeto(p);
-            if (extracted) rootDir = extracted;
-          }
-        } catch {
-          // ignora
-        }
-      }
-
-      // 3. Fallback defensivo: se companyId não estiver presente, localiza o projeto varrendo as empresas
-      if (!rootDir && !companyId) {
-        try {
-          const companies = await ctx.companies.list({});
-          for (const c of companies) {
-            try {
-              const project = await ctx.projects.get(projectId, c.id);
-              if (project) {
-                companyId = c.id;
-                if (!projectName) projectName = (project as unknown as { name?: string }).name;
-                const extracted = extrairRaizDoProjeto(project);
-                if (extracted) {
-                  rootDir = extracted;
-                  break;
-                }
-              }
-            } catch {
-              // continua na próxima empresa
-            }
-          }
-        } catch {
-          // ignora
-        }
-      }
+      const workspace = await ctx.projects.getPrimaryWorkspace(projectId, companyId);
+      const rootDir = workspace?.path?.replace(/[/\\]+$/, "") || extrairRaizDoProjeto(project);
 
       if (!rootDir) {
         throw new Error(
@@ -191,6 +135,7 @@ const plugin = definePlugin({
       }
 
       return await taskProcessManager.executeTask({
+        companyId,
         projectId,
         projectName,
         rootDir,
@@ -199,27 +144,27 @@ const plugin = definePlugin({
       });
     });
 
-    const handleStatuses = async () => {
-      return taskProcessManager.getAllStatuses();
-    };
-    ctx.actions.register("task-manager:status", handleStatuses);
-    ctx.data.register("task-manager:status", handleStatuses);
+    ctx.actions.register("task-manager:status", async (_params, actionContext) => {
+      const companyId = requiredCompanyId(actionContext.companyId);
+      return taskProcessManager.getAllStatuses(companyId);
+    });
 
-    const handleLogs = async (params: Record<string, unknown>) => {
+    ctx.actions.register("task-manager:logs", async (params, actionContext) => {
+      const companyId = requiredCompanyId(actionContext.companyId);
       const projectId = requiredString(params, "projectId");
-      const rawTaskType = requiredString(params, "taskType");
-      if (rawTaskType !== "dev" && rawTaskType !== "build") {
-        throw new Error("taskType inválido (deve ser 'dev' ou 'build')");
-      }
-      return taskProcessManager.getLogs(projectId, rawTaskType as TipoDeTask);
-    };
-    ctx.actions.register("task-manager:logs", handleLogs);
-    ctx.data.register("task-manager:logs", handleLogs);
+      const taskType = requiredTaskType(params);
+      const project = await ctx.projects.get(projectId, companyId);
+      if (!project) throw new Error("projeto não encontrado na empresa ativa");
+      return taskProcessManager.getLogs(companyId, projectId, taskType);
+    });
 
-    ctx.actions.register("task-manager:clear-logs", async (params) => {
+    ctx.actions.register("task-manager:clear-logs", async (params, actionContext) => {
+      const companyId = requiredCompanyId(actionContext.companyId);
       const projectId = requiredString(params, "projectId");
-      const rawTaskType = requiredString(params, "taskType");
-      taskProcessManager.clearLogs(projectId, rawTaskType as TipoDeTask);
+      const taskType = requiredTaskType(params);
+      const project = await ctx.projects.get(projectId, companyId);
+      if (!project) throw new Error("projeto não encontrado na empresa ativa");
+      taskProcessManager.clearLogs(companyId, projectId, taskType);
       return { success: true };
     });
 
@@ -231,6 +176,10 @@ const plugin = definePlugin({
       status: "ok",
       message: "MaxPaperclipPlugin operacional (AutoSave, Tradutor, Iconify, Tarefas, Capacidades, TaskManager)",
     };
+  },
+
+  async onShutdown() {
+    await taskProcessManager.stopAll();
   },
 });
 
