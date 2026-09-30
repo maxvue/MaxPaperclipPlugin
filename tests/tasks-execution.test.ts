@@ -337,6 +337,45 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       expect(result.success).toBe(false);
       expect(result.status).toBe("erro");
       expect(result.message).toContain("fora da raiz autorizada");
+      expect(
+        manager
+          .getLogs("empresa-1", "proj-traversal", "build")
+          .logs.some((linha) => linha.includes("fora da raiz autorizada"))
+      ).toBe(true);
+    });
+
+    it("deve registrar no terminal falhas anteriores à criação do processo", async () => {
+      const diretorioInexistente = path.join(tmpDir, "nao-existe");
+
+      const result = await manager.executeTask({
+        companyId: "empresa-1",
+        projectId: "proj-build-invalido",
+        projectName: "Projeto Inválido",
+        rootDir: diretorioInexistente,
+        taskType: "build",
+        action: "start",
+      });
+
+      expect(result).toMatchObject({ success: false, status: "erro" });
+      const logs = manager.getLogs("empresa-1", "proj-build-invalido", "build");
+      expect(logs.status).toBe("erro");
+      expect(logs.logs).toHaveLength(1);
+      expect(logs.logs[0]).toContain("Diretório do projeto não encontrado");
+    });
+
+    it("deve registrar ausência da raiz informada para consulta posterior", async () => {
+      const result = await manager.executeTask({
+        companyId: "empresa-1",
+        projectId: "proj-sem-raiz",
+        projectName: "Projeto sem raiz",
+        taskType: "build",
+        action: "start",
+      });
+
+      expect(result).toMatchObject({ success: false, status: "erro" });
+      expect(
+        manager.getLogs("empresa-1", "proj-sem-raiz", "build").logs.join("\n")
+      ).toContain("raiz do projeto não informada");
     });
 
     it("deve ocultar segredos e truncar linhas excessivas nos logs", async () => {

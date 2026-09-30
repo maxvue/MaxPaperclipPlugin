@@ -129,8 +129,12 @@ const plugin = definePlugin({
       const rootDir = workspace?.path?.replace(/[/\\]+$/, "") || extrairRaizDoProjeto(project);
 
       if (!rootDir) {
-        throw new Error(
-          `Não foi possível determinar o diretório raiz local do projeto ${projectId}`
+        return taskProcessManager.registrarFalhaDeExecucao(
+          companyId,
+          projectId,
+          taskType,
+          `Não foi possível determinar o diretório raiz local do projeto ${projectId}`,
+          projectName
         );
       }
 
