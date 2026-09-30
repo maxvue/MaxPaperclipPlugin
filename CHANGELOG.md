@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-09-30
+
+### Fixed
+
+- Corrigida a resolução do diretório raiz usado pelas tarefas `npm run dev` e `npm run build`.
+- Corrigida a captura e a exibição dos logs das tarefas, incluindo saída produzida sem quebra de linha final.
+- Corrigido o contrato do planejamento assistido para exigir perguntas e aprovações como interações nativas do Paperclip, em vez de comentários Markdown comuns.
+
 ## [1.1.7] - 2026-09-28
 
 ### Added
@@ -61,5 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented worker-only secrets from being inherited by repository-defined subprocesses.
 - Bounded the persistent Iconify cache by entry count and total size.
 
-[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.7...HEAD
+[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.8...HEAD
+[1.1.8]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/maxvue/MaxPaperclipPlugin/releases/tag/v1.1.7
