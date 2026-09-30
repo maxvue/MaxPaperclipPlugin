@@ -6,6 +6,7 @@ import {
   lerTaskDeclaradaNoConteudo,
   obterTaskFallback,
   resolverTaskEfetiva,
+  extrairRaizDoProjeto,
 } from "../src/modules/tasks/tasksJson.js";
 import { TaskProcessManager } from "../src/modules/tasks/processManager.js";
 import { sidebarStore } from "../src/modules/tasks/store.js";
@@ -350,6 +351,85 @@ describe("Execução de Tasks .vscode no MaxPaperclipPlugin (Estilo MaxCode)", (
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    it("deve enviar companyId, rootDir e projectName em executeProjectTask e desempacotar resposta aninhada em data", async () => {
+      const originalFetch = globalThis.fetch;
+      let capturedBody: any = null;
+
+      globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+        capturedBody = JSON.parse((init?.body as string) || "{}");
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/json" }),
+          json: async () => ({
+            data: {
+              success: true,
+              status: "rodando",
+              pid: 7777,
+            },
+          }),
+        } as unknown as Response;
+      });
+
+      try {
+        const result = await executeProjectTask("proj-abc", "dev", "start", {
+          companyId: "comp-123",
+          rootDir: "/home/usuario/app",
+          projectName: "Meu App",
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.status).toBe("rodando");
+        expect(result.pid).toBe(7777);
+        expect(capturedBody.params).toEqual({
+          projectId: "proj-abc",
+          taskType: "dev",
+          action: "start",
+          companyId: "comp-123",
+          rootDir: "/home/usuario/app",
+          projectName: "Meu App",
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("6. Extração de Diretório Raiz do Projeto (extrairRaizDoProjeto)", () => {
+    it("deve extrair a raiz a partir de codebase.effectiveLocalFolder", () => {
+      const proj = {
+        codebase: { effectiveLocalFolder: "/home/johnattas/GitHub/MaxCode/" },
+      };
+      expect(extrairRaizDoProjeto(proj)).toBe("/home/johnattas/GitHub/MaxCode");
+    });
+
+    it("deve extrair a raiz a partir de codebase.localFolder", () => {
+      const proj = {
+        codebase: { localFolder: "/home/johnattas/GitHub/EngeApp" },
+      };
+      expect(extrairRaizDoProjeto(proj)).toBe("/home/johnattas/GitHub/EngeApp");
+    });
+
+    it("deve extrair a raiz a partir de primaryWorkspace.cwd", () => {
+      const proj = {
+        primaryWorkspace: { cwd: "/home/johnattas/GitHub/MaxPinia/" },
+      };
+      expect(extrairRaizDoProjeto(proj)).toBe("/home/johnattas/GitHub/MaxPinia");
+    });
+
+    it("deve extrair a raiz a partir de workspaces[0].cwd", () => {
+      const proj = {
+        workspaces: [{ cwd: "/home/johnattas/GitHub/MaxAiManager" }],
+      };
+      expect(extrairRaizDoProjeto(proj)).toBe("/home/johnattas/GitHub/MaxAiManager");
+    });
+
+    it("deve retornar null se o projeto for inválido ou não tiver pastas locais", () => {
+      expect(extrairRaizDoProjeto(null)).toBeNull();
+      expect(extrairRaizDoProjeto({})).toBeNull();
+      expect(extrairRaizDoProjeto({ codebase: {} })).toBeNull();
     });
   });
 });

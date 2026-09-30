@@ -36,6 +36,7 @@ import { StatusIcon } from "./StatusIcon.js";
 import { TaskDeleteConfirmModal } from "./TaskDeleteConfirmModal.js";
 import { PlanningDialog } from "./PlanningDialog.js";
 import { TaskLogsModal } from "./TaskLogsModal.js";
+import { extrairRaizDoProjeto } from "./tasksJson.js";
 
 interface TaskSidebarRightColumnProps {
   context?: {
@@ -480,26 +481,38 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
   // Execução de NPM RUN DEV e NPM RUN BUILD
   const handleToggleRunDev = useCallback(
     async (projectId: string) => {
+      const proj = projectsById.get(projectId);
+      const rootDir = proj ? extrairRaizDoProjeto(proj) || undefined : undefined;
       const current = sidebarStore.getSnapshot().runDevStates[projectId] ?? "parado";
       sidebarStore.setRunDevStatus(projectId, current === "rodando" ? "parado" : "rodando");
-      const result = await executeProjectTask(projectId, "dev");
+      const result = await executeProjectTask(projectId, "dev", "toggle", {
+        companyId: companyId || undefined,
+        rootDir,
+        projectName: proj?.name,
+      });
       if (result?.status) {
         sidebarStore.setRunDevStatus(projectId, result.status);
       }
     },
-    [],
+    [projectsById, companyId],
   );
 
   const handleToggleRunBuild = useCallback(
     async (projectId: string) => {
+      const proj = projectsById.get(projectId);
+      const rootDir = proj ? extrairRaizDoProjeto(proj) || undefined : undefined;
       const current = sidebarStore.getSnapshot().runBuildStates[projectId] ?? "parado";
       sidebarStore.setRunBuildStatus(projectId, current === "rodando" ? "parado" : "rodando");
-      const result = await executeProjectTask(projectId, "build");
+      const result = await executeProjectTask(projectId, "build", "toggle", {
+        companyId: companyId || undefined,
+        rootDir,
+        projectName: proj?.name,
+      });
       if (result?.status) {
         sidebarStore.setRunBuildStatus(projectId, result.status);
       }
     },
-    [],
+    [projectsById, companyId],
   );
 
   // Abertura do modal de exclusão

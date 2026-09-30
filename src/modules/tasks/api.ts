@@ -1,4 +1,4 @@
-import type { IssueSummary, LiveRun, ProjectSummary } from "./types.js";
+import type { ExecuteProjectTaskOptions, IssueSummary, LiveRun, ProjectSummary } from "./types.js";
 
 export async function hostFetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -174,19 +174,31 @@ export async function executeProjectTask(
   projectId: string,
   taskType: "dev" | "build",
   action: "start" | "stop" | "toggle" = "toggle",
+  options?: ExecuteProjectTaskOptions,
 ): Promise<TaskExecutionResult> {
   try {
-    const res = await hostFetchJson<TaskExecutionResult>(
+    const res = await hostFetchJson<{ data?: TaskExecutionResult } | TaskExecutionResult>(
       `/api/plugins/max.paperclip-plugin/bridge/action`,
       {
         method: "POST",
         body: JSON.stringify({
           key: "task-manager:execute",
-          params: { projectId, taskType, action },
+          params: {
+            projectId,
+            taskType,
+            action,
+            companyId: options?.companyId,
+            rootDir: options?.rootDir,
+            projectName: options?.projectName,
+          },
         }),
       },
     );
-    return res;
+    const actualResult =
+      res && typeof res === "object" && "data" in res && (res as { data?: TaskExecutionResult }).data
+        ? (res as { data: TaskExecutionResult }).data
+        : (res as TaskExecutionResult);
+    return actualResult;
   } catch (err) {
     console.warn(`Erro ao acionar task ${taskType} do projeto ${projectId}:`, err);
     return {

@@ -110,7 +110,9 @@ const plugin = definePlugin({
     // Task Manager Actions & Data (Execução de tasks .vscode estilo MaxCode)
     // -------------------------------------------------------------
     ctx.actions.register("task-manager:execute", async (params, actionContext) => {
-      const companyId = actionContext.companyId;
+      let companyId =
+        (typeof params.companyId === "string" && params.companyId.trim()) ||
+        actionContext.companyId;
       const projectId = requiredString(params, "projectId");
       const rawTaskType = requiredString(params, "taskType");
       if (rawTaskType !== "dev" && rawTaskType !== "build") {
@@ -123,25 +125,59 @@ const plugin = definePlugin({
           : "toggle";
 
       let rootDir = typeof params.rootDir === "string" ? params.rootDir.trim() : "";
-      let projectName: string | undefined;
+      let projectName: string | undefined =
+        typeof params.projectName === "string" && params.projectName.trim()
+          ? params.projectName.trim()
+          : undefined;
 
+      // 1. Tenta buscar direto se já temos companyId
       if (!rootDir && companyId) {
-        const project = await ctx.projects.get(projectId, companyId);
-        if (project) {
-          projectName = (project as unknown as { name?: string }).name;
-          const extracted = extrairRaizDoProjeto(project);
-          if (extracted) rootDir = extracted;
+        try {
+          const project = await ctx.projects.get(projectId, companyId);
+          if (project) {
+            if (!projectName) projectName = (project as unknown as { name?: string }).name;
+            const extracted = extrairRaizDoProjeto(project);
+            if (extracted) rootDir = extracted;
+          }
+        } catch {
+          // ignora
         }
       }
 
+      // 2. Tenta listar projetos da empresa se ainda não encontrou a raiz
       if (!rootDir && companyId) {
         try {
           const allProjects = await ctx.projects.list({ companyId, limit: 500 });
           const p = allProjects.find((x) => x.id === projectId);
           if (p) {
-            projectName = (p as unknown as { name?: string }).name;
+            if (!projectName) projectName = (p as unknown as { name?: string }).name;
             const extracted = extrairRaizDoProjeto(p);
             if (extracted) rootDir = extracted;
+          }
+        } catch {
+          // ignora
+        }
+      }
+
+      // 3. Fallback defensivo: se companyId não estiver presente, localiza o projeto varrendo as empresas
+      if (!rootDir && !companyId) {
+        try {
+          const companies = await ctx.companies.list({});
+          for (const c of companies) {
+            try {
+              const project = await ctx.projects.get(projectId, c.id);
+              if (project) {
+                companyId = c.id;
+                if (!projectName) projectName = (project as unknown as { name?: string }).name;
+                const extracted = extrairRaizDoProjeto(project);
+                if (extracted) {
+                  rootDir = extracted;
+                  break;
+                }
+              }
+            } catch {
+              // continua na próxima empresa
+            }
           }
         } catch {
           // ignora

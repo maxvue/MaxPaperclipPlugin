@@ -37,6 +37,15 @@ export interface ProjectSummary {
   color?: string | null;
   icon?: string | null;
   leadAgentId?: string | null;
+  codebase?: Record<string, unknown> | null;
+  primaryWorkspace?: Record<string, unknown> | null;
+  workspaces?: Array<Record<string, unknown>> | null;
+}
+
+export interface ExecuteProjectTaskOptions {
+  companyId?: string;
+  rootDir?: string;
+  projectName?: string;
 }
 
 export interface PlanningLeaderSummary {

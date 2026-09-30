@@ -231,3 +231,26 @@ export function resolverTaskEfetiva(
     isBackground: declarada.isBackground,
   };
 }
+
+/**
+ * Extrai o diretório raiz local a partir do objeto do projeto do Paperclip.
+ */
+export function extrairRaizDoProjeto(project: unknown): string | null {
+  if (!project || typeof project !== "object") return null;
+  const p = project as Record<string, unknown>;
+  const codebase = p.codebase as Record<string, unknown> | undefined;
+  const primaryWorkspace = p.primaryWorkspace as Record<string, unknown> | undefined;
+  const workspaces = Array.isArray(p.workspaces) ? p.workspaces : [];
+
+  const candidate =
+    (typeof codebase?.effectiveLocalFolder === "string" && codebase.effectiveLocalFolder) ||
+    (typeof codebase?.localFolder === "string" && codebase.localFolder) ||
+    (typeof primaryWorkspace?.cwd === "string" && primaryWorkspace.cwd) ||
+    (workspaces.length > 0 &&
+      typeof (workspaces[0] as Record<string, unknown>)?.cwd === "string" &&
+      ((workspaces[0] as Record<string, unknown>).cwd as string)) ||
+    null;
+
+  if (!candidate || typeof candidate !== "string") return null;
+  return candidate.replace(/[/\\]+$/, "");
+}
