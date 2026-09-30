@@ -37,6 +37,7 @@ import { TaskDeleteConfirmModal } from "./TaskDeleteConfirmModal.js";
 import { PlanningDialog } from "./PlanningDialog.js";
 import { TaskLogsModal } from "./TaskLogsModal.js";
 import { extrairRaizDoProjeto } from "./tasksJson.js";
+import { findNativeNewTaskButton } from "./newTask.js";
 
 interface TaskSidebarRightColumnProps {
   context?: {
@@ -168,19 +169,8 @@ export function TaskSidebarRightColumn({ context }: TaskSidebarRightColumnProps)
     if (typeof document === "undefined") return;
 
     // 1. Tenta acionar o botão nativo "New Task" no Sidebar do Paperclip
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
-    const newIssueBtn = buttons.find((b) => {
-      const text = b.textContent?.toLowerCase() || "";
-      const aria = b.getAttribute("aria-label")?.toLowerCase() || "";
-      return (
-        (text.includes("new issue") ||
-          text.includes("new task") ||
-          text.includes("nova tarefa") ||
-          aria.includes("new issue") ||
-          aria.includes("new task")) &&
-        b.offsetParent !== null
-      );
-    });
+    const pluginPanel = document.getElementById("task-sidebar-resizable-panel");
+    const newIssueBtn = findNativeNewTaskButton(document, pluginPanel);
 
     if (newIssueBtn) {
       newIssueBtn.click();

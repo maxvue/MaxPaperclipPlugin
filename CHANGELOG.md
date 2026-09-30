@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-09-30
+
+### Fixed
+
+- Fixed the task panel's “New task” action recapturing its own button instead of opening Paperclip's native creation modal.
+- Fixed development and build task execution when resolving local project workspaces.
+- Improved task-process lifecycle reconciliation and preserved complete execution logs.
+
 ## [1.1.7] - 2026-09-28
 
 ### Added
@@ -61,5 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented worker-only secrets from being inherited by repository-defined subprocesses.
 - Bounded the persistent Iconify cache by entry count and total size.
 
-[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.7...HEAD
+[Unreleased]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.8...HEAD
+[1.1.8]: https://github.com/maxvue/MaxPaperclipPlugin/compare/v1.1.7...v1.1.8
 [1.1.7]: https://github.com/maxvue/MaxPaperclipPlugin/releases/tag/v1.1.7
